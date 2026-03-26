@@ -1,0 +1,6 @@
+num_neurons_core: 1024
+num_synapses_core: 131072
+num_routes_core: 131072
+num_cores: 4
+memory:
+  uram_data_width: 72

@@ -1,0 +1,12 @@
+wheel
+numpy<2
+pytorch_lightning
+torch<2.11.0
+tonic
+qtorch @ git+https://github.com/nitzsche-fzi/QPyTorch.git
+nir @ git+https://github.com/mneher11/NIR.git@dev-os
+nirtorch @ git+https://github.com/mneher11/NIRTorch.git@dev-os
+norse @ git+https://github.com/mneher11/norse.git@dev-os
+matplotlib
+tensorboard
+pyyaml

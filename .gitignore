@@ -1,0 +1,15 @@
+# Ignore (Vivado) projects
+hardware_deployment/projects
+# Ignore Vivado block design generated files
+hardware_accelerator/block_design/*/*
+!hardware_accelerator/block_design/*/*.bd
+!hardware_accelerator/block_design/*/hdl/
+!hardware_accelerator/block_design/*/hdl/*_wrapper.v
+# Ignore Vivado IP generated files
+hardware_accelerator/ip/*/gen/
+# Ignore dataset download paths
+software_framework/datasets/
+# Ignore Python virtual environment
+.venv/
+# Ignore IDE specific files
+.vscode/

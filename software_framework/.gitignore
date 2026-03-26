@@ -1,0 +1,12 @@
+# Python ignores
+**/__pycache__/
+**/.ipynb_checkpoints/
+
+# Pip install artifacts
+build/
+*.egg-info/
+
+# Run artifacts
+output/
+*.nir
+*.npy
