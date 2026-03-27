@@ -216,7 +216,7 @@ either the checkpoints directory or a previous training:
 python3 accelerator_train.py \
   -c yana/train/config/shd_feed_forward.yaml \
   --trainer_cfg.checkpoint_path output/shd/lightning_logs/version_0/checkpoints/last.ckpt \
-  --trainer_cfg.num_epoch 0 \
+  --trainer_cfg.num_epochs 0 \
   --pruning_cfg.iterative_pruning true
 ```
 This creates two new training directories:
