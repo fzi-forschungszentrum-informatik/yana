@@ -4,141 +4,61 @@ YANA is an open-source, FPGA-based, event-driven digital spiking neural network 
 
 To make the hardware broadly usable, YANA is accompanied by an end-to-end software framework that targets common neuromorphic workflows. It uses the [Neuromorphic Intermediate Representation (NIR)](https://github.com/neuromorphs/NIR) as an interchange format and is organized into three modules:
 
-- **YANA train** — hardware-aware SNN training, using [Norse](https://github.com/norse/norse)
-- **YANA deploy** — NIR parsing, fixed-point validation, and compilation into accelerator memory/routing configurations
-- **YANA runtime** — PYNQ-based on-device control that loads configurations, streams events, runs inference, and reports performance metrics
+- [**YANA core**](software_framework/yana/core/) — Basic hardware configuration and fixed-point arithmetic
+- [**YANA train**](software_framework/yana/train/) — hardware-aware SNN training, using [Norse](https://github.com/norse/norse)
+- [**YANA deploy**](software_framework/yana/deploy/) — NIR parsing, fixed-point validation, and compilation into accelerator memory/routing configurations
 
-At present, this repository hosts the sources to regenerate the KR260 YANA hardware prototype as used during [our tutorial at NICE 2025](https://flagship.kip.uni-heidelberg.de/jss/HBPm?mI=263&m=showAgenda&showAbstract=9849#9849) and our publication in Brain Informatics 2025. The software framework currently targets this hardware prototype.
+This repository hosts the RTL sources and software framework for YANA, enabling the training, deployment and simulation of the accelerator hardware using a fully open-source toolchain.
 
----
+YANA has been shown in multiple tutorials and publications:
+- [Tutorial at NICE 2025](https://flagship.kip.uni-heidelberg.de/jss/HBPm?mI=263&m=showAgenda&showAbstract=9849#9849)
+- Publication in Brain Informatics 2025 ([arxiv](https://arxiv.org/abs/2604.03432))
+- [Tutorial at HEART 2026](https://heart2026.github.io/Tutorial.html)
 
 ## Table of Contents
 
-- [Setup: Hardware](#setup-hardware)
+- [Quick start using Docker (recommended)](#quick-start-using-docker-recommended)
+- [Manual setup](#manual-setup)
   - [Requirements](#requirements)
-  - [Recreate the YANA Prototype Vivado Project](#recreate-the-yana-prototype-vivado-project)
-  - [Generate Bitstream and Export Hardware](#generate-bitstream-and-export-hardware)
-  - [Using the YANA Prototype](#using-the-yana-prototype)
-- [Setup: Kria Board OS and Software](#setup-kria-board-os-and-software)
-  - [Requirements](#requirements-1)
-  - [Creating the SD Card Image and Boot](#creating-the-sd-card-image-and-boot)
-  - [Setting Up Dependencies](#setting-up-dependencies)
-- [Setup: Host-side Software (SNN Training and Deployment Files)](#setup-host-side-software-snn-training-and-deployment-files)
-  - [Requirements](#requirements-2)
   - [Setting up the virtual environment](#setting-up-the-virtual-environment)
-  - [Using the software framework](#using-the-software-framework)
-    - [Training](#training)
-    - [Optimization through pruning](#optimization-through-pruning)
-    - [Deployment](#deployment)
-    - [Prepare and transfer files for FPGA experiments](#prepare-and-transfer-files-for-fpga-experiments)
+  - [Prerequisites for Verilog simulation](#prerequisites-for-verilog-simulation)
+- [Using YANA - Software Toolchain](#using-yana---software-toolchain)
+  - [Train your own networks](#train-your-own-networks)
+  - [Optimization through pruning](#optimization-through-pruning)
+  - [Deploy your self-trained networks](#deploy-your-self-trained-networks)
+  - [Deploy pre-trained networks](#deploy-pre-trained-networks)
+- [Using YANA - RTL Simulation](#using-yana---rtl-simulation)
+- [Customization](#customization)
+  - [Use other datasets](#use-other-datasets)
+  - [Change the network configuration](#change-the-network-configuration)
+  - [Change the training parameters](#change-the-training-parameters)
 - [Acknowledgments](#acknowledgments)
 - [License](#license)
 - [Citation](#citation)
 - [Contact](#contact)
 
----
+## Quick start using Docker (recommended)
+To quickly get YANA up and running, use the docker image provided which includes
+the necessary Python environment for the software framework as well as
+[Verilator](https://verilator.org/guide/latest/) for running RTL simulations.
 
-## Setup: Hardware
-
-### Requirements
-
-- Host with Linux, tested on Ubuntu 24.04 LTS
-  - Windows can work, too — using our documented flow requires Linux due to use of .sh scripts
-- Vivado 2024.1 (other versions may need adaptations to [./hardware_deployment/tcl/kr260_yana_prototype.tcl](hardware_deployment/tcl/kr260_yana_prototype.tcl))
-- Know your Vivado installation path
-
-### Recreate the YANA Prototype Vivado Project
-
-Run the script [./hardware_deployment/recreate_project.sh](hardware_deployment/recreate_project.sh):
-
+To create a docker container using the image, simply run
 ```bash
-./hardware_deployment/recreate_project.sh -n kr260_yana_prototype -p "/PATH/TO/VIVADO/DIRECTORY" -v "2024.1" -t hardware_deployment/tcl/kr260_yana_prototype.tcl
+cd docker
+./up.sh
 ```
+which will create a new container, mount this directory into `/workspace` and
+duplicate your user in the container (to avoid permission conflicts for files
+created inside the container).
 
-- `-n` — name of the Vivado project
-- `-p` — path to the directory that contains your Vivado installations (e.g. `/opt/Xilinx/Vivado/`)
-- `-t` — path to the TCL script to use for the project
-- `-v` — version of Vivado to use; the provided tcl script was generated using Vivado 2024.1
-
-This creates a new Vivado project in `./hardware_deployment/projects/kr260_yana_prototype`.
-
-### Generate Bitstream and Export Hardware
-
-The regenerated Vivado project is ready to synthesize and implement without further modifications. Use Vivado GUI or tcl mode to generate the bitstream. The default target is the KR260, retarget to KV260 if needed. Once the bitstream is generated, export the hardware to an `.xsa` file, e.g. via tcl console:
-
-```tcl
-write_hw_platform -fixed -include_bit -force -file /PATH/TO/STORE/FILE.XSA
-```
-
-### Using the YANA Prototype
-
-The prototype is used via a PYNQ-based Python API. Later you will upload the .xsa file to the board and use the Python API to run inference.
-See [software_deployment/fpga/](../software_deployment/fpga/) for more details.
-
----
-
-## Setup: Kria Board OS and Software
-
-### Requirements
-
-- AMD Kria KR260 or KV260 board 
-- Host to prepare an SD card image
-- Local network for your host and Kria board
-
-### Creating the SD Card Image and Boot
-
-- [Download the Ubuntu for Kria SD card image](https://ubuntu.com/download/amd#kria-k26)
-  - Tested with Ubuntu Desktop 22.04
-- Flash to SD card
-- [Booting KR260](https://xilinx.github.io/kria-apps-docs/kr260/linux_boot/ubuntu_22_04/build/html/docs/intro.html) — [booting KV260](https://xilinx.github.io/kria-apps-docs/kv260/2022.1/linux_boot/ubuntu_22_04/build/html/docs/intro.html)
-- Add the board to your local network via ethernet
-- Login via `ssh` (default username: `ubuntu`, password: `ubuntu`)
-  - Tip: `sudo xmutil desktop_disable` to disable the desktop environment and gain some performance
-
-### Setting Up Dependencies
-
-- (all following while connected to the board via `ssh`)
-- Install [Kria-PYNQ](https://github.com/Xilinx/Kria-PYNQ)
-  - Tested commit `21bf5e1`
-- JupyterLab can now be accessed via your host's web browser `<ip_address>:9090/lab`. Password is **xilinx**
-- (all following with JupyterLab open)
-- From the JupyterLab launcher, open a new terminal
-  - `ctrl + shift + l` opens a new launcher, in case it vanished
-- `cd ~/jupyter_notebooks && mkdir yana && chmod 777 yana`
-- Copy the files in [software_deployment/fpga/](software_deployment/fpga/) and [tutorial/fpga/](tutorial/fpga/) to the `yana` directory
-  - E.g. via JupyterLab file browser
-- Locate the `.xsa` file that was exported from the Vivado project and copy it to the `yana` directory, too
-- `cd yana` and `python3 -m pip install -r requirements.txt`
-
-Following is the desired structure covered by the steps above:
+If you prefer running the container manually, simply pull and run the container
+like follows:
 ```bash
-root@kria:/root# tree
-.
-└── jupyter_notebooks
-    └── yana
-        ├── FPGA_notebook.ipynb
-        ├── design_1_wrapper.xsa
-        ├── experiment_tracker.py
-        ├── experiments
-        │   └── example
-        │       ├── networks
-        │       │   └── network_nmnist
-        │       │       ├── [...]
-        │       │       └── output_traces
-        │       │           └── [...]
-        │       └── test_samples
-        │           └── [...]
-        ├── experiments.zip
-        ├── fixed_point.py
-        └── yana_fpga.py
-
+docker pull ghcr.io/neher-fzi/yana:latest
+docker run -it --rm -v `pwd`:/workspace ghcr.io/neher-fzi/yana:latest
 ```
 
-The board is now ready to evaluate experiments created via the YANA software framework. For this, proceed to the next section.
-
----
-
-## Setup: Host-side Software (SNN Training and Deployment Files)
+## Manual setup
 
 ### Requirements
 - Python 3.10 or later installed on the system
@@ -165,7 +85,12 @@ pip install -e ./software_framework
 python3 -m yana --version
 ```
 
-### Using the software framework
+### Prerequisites for Verilog simulation
+We use [Verilator](https://verilator.org/guide/latest/) for RTL simulation of
+the hardware design. Refer to their documentation for instructions on how to set
+it up for your system.
+
+## Using YANA - Software Toolchain
 YANA's software framework is a toolkit that enables developers to train,
 optimize, compile and deploy SNNs on the accelerator. To show an example
 workflow of how its various tools can be used, multiple scripts are included.
@@ -174,112 +99,132 @@ event-based datasets: [N-MNIST](https://www.garrickorchard.com/datasets/n-mnist)
 and [Spiking Heidelberg
 Digits](https://zenkelab.org/resources/spiking-heidelberg-datasets-shd/).
 
-Let's walk through how training, compiling and deploying a simple feed forward
-SNN with one hidden layer looks like.
+Let's walk through how training, deploying and running a simple feed forward SNN
+with one hidden layer looks like. The following steps assume you are using the
+[Docker setup](#quick-start-using-docker-recommended).
 
-#### Training
+### Train your own networks
 The software framework uses a YAML-based configuration system. A configuration
 file contains all information needed to describe the network architecture and
-training setup. Each option present in the configuration file can be
+training setup. Almost all options in the configuration file can be
 overridden using the CLI. To show all available parameters, run:
 ```bash
 # Navigate to software framework directory
 cd software_framework
-python3 accelerator_train.py -h
+python3 train_network.py -h
 ```
 To start a training, select one of the two provided configurations. In this
-example, we are using the SHD dataset:
+example, we are using the SHD dataset (as is it smaller and downloads quicker):
 ```bash
-# If you have a GPU
-python3 accelerator_train.py -c yana/train/config/shd_feed_forward.yaml
-# If you don't have a GPU (CPU training)
-python3 accelerator_train.py -c yana/train/config/shd_feed_forward.yaml --trainer_cfg.device_num -1
+python3 train_network.py -c yana/train/config/shd_feed_forward.yaml \
+    --trainer_cfg.num_epochs 20
 ```
-You might want to consider limiting the amount of training epochs. By default, a
-patience-based early stopping mechanism is used. To override the maximum number
-of training epochs, run:
-```bash
-python3 accelerator_train.py -c yana/train/config/shd_feed_forward.yaml --trainer_cfg.num_epochs 10
-```
-The trained networks and their generated NIR files are placed into an output
-folder. By default, this folder can be found at
-`output/<dataset>/lightning_logs/version_xx`. In addition to that, an input
-sample of the training dataset and the expected output of the network is
-generated as stimulus and reference for the simulation later.
+By default, a patience-based early stopping mechanism is used. We override it to
+a maximum of 20 epochs in the interest of time. The checkpoints and
+configuration files for the trained networks are placed into an output folder.
+This folder can be found at `output/<dataset>/lightning_logs/version_x`.
 
-#### Optimization through pruning
+The training will take a while, so to kill the time use
+```bash
+tensorboard --logdir /workspace/software_framework/output/shd/lightning_logs \
+    --bind_all
+```
+to monitor the progress of you training. In VS Code, just click the displayed
+link. If you are using a terminal or another editor that doesn't automatically
+forward ports, use [http://172.17.0.2:6006](http://172.17.0.2:6006) (or the IP
+adress of your Docker container, if you have multiple running).
+
+### Optimization through pruning
 Support for pruning is built into the software framework, as reducing the
-network's active weights directly impacts the inference latency. To perform an
-iterative pruning run with fine-tuning, you can load an existing checkpoint from
-either the checkpoints directory or a previous training:
+network's active weights directly impacts the inference latency on YANA thanks
+to its fully event-driven architecture. To perform an iterative pruning run with
+fine-tuning, you can load the checkpoint of the network you trained earlier:
 ```bash
-python3 accelerator_train.py \
-  -c yana/train/config/shd_feed_forward.yaml \
-  --trainer_cfg.checkpoint_path output/shd/lightning_logs/version_0/checkpoints/last.ckpt \
-  --trainer_cfg.num_epochs 0 \
-  --pruning_cfg.iterative_pruning true
+python3 prune_network.py -C output/shd/feed_forward/lightning_logs/version_0
 ```
-This creates two new training directories:
-`output/shd/lightning_logs/version_1`, which only contains the generated NIR
-file and test stimuli of the selected checkpoint, and
-`output/shd/lightning_logs/version_1_pruning`, which contains the trained
-checkpoints and generated files of the pruning run.
+Which creates a new directory
+`output/shd/feed_forward/lightning_logs/version_0_pruning`. For each stage of
+the iterative fine-tuned pruning the best checkpoint is stored.
 
-#### Deployment
-YANA's software framework contains a simulation of the fixed-point arithmetic
-used inside the accelerator. To run the deployment, execute:
+### Deploy your self-trained networks
+YANA's [`deploy`](software_framework/yana/deploy/) module contains a bit-accurate emulation of the fixed-point
+arithmetic used inside the accelerator. It also generates all required weight
+and routing memory entries to initialize the hardware. To deploy your trained
+networks, run
 ```bash
-# Run deployment for unpruned network
-python3 accelerator_deploy.py -i output/shd/lightning_logs/version_1
-# Run deployment for pruned network
-python3 accelerator_deploy.py -i output/shd/lightning_logs/version_1_pruning
-```
-This places the memory files required by the accelerator hardware inside
-`output/shd/lightning_logs/<version>/deploy`. It also prints a utilization
-report and the minimum squared error (MSE) between the PyTorch network and the
-simulation.
-
-> [!NOTE]
-> The simulation is designed to be bit-accurate to the accelerator
-> hardware. The PyTorch model also uses custom neuron models that mimic the
-> quantization and fixed-point calculations in the hardware neuron. However, due
-> to inconsistencies in rounding, the MSE can sometimes be >0. This however does
-> not affect the performance of the network on hardware.
-
-#### Prepare and transfer files for FPGA experiments
-To evaluate the trained networks on the Xilinx Kria KV260 FPGA Board, we package
-them into an experiment artifact directory alongside some input samples and
-expected outputs:
-```bash
-python3 accelerator_export.py \
-  --input-dirs output/shd/lightning_logs/version_1 \
-               output/shd/lightning_logs/version_1_pruning \
-  --num-samples 10
-```
-After this, an experiment archive file `output/experiments.tar.gz` will be
-created.
-
-This file needs to be transferred to the `~/jupyter_notebooks/yana/` directory
-on the FPGA. The easiest way is through the JuypterLab GUI's upload
-functionality (or drag and drop). In case you do not want to run you own
-training and just want to see the accelerator in action, you can export the
-provided pretrained networks (unpruned and 30% pruning for each dataset):
-```bash
-python3 accelerator_export.py --example
-```
-Once the experiment's archive has been uploaded to the FPGA, extract its contents
-to make it runnable:
-```bash
-# Inside FPGA's terminal at ~/jupyter_notebooks/yana/
-tar -xzf experiments.tar.gz -C experiments/
+python3 deploy_checkpoint.py \
+    -C output/shd/feed_forward/lightning_logs/version_0/ \
+    -o ../hardware_accelerator/sim/tb_yana_top/files/ \
+    -e custom_trained -n 10
 ```
 
-You are now ready to evaluate experiments created via the YANA software
-framework. Via JupyterLab, you can open the `FPGA_notebook.ipynb` notebook and
-follow its instructions to run the experiments and learn more about the
-accelerator.
+### Deploy pre-trained networks
+For convenience we include a few pretrained networks in the
+[`software_framework/pretrained`](software_framework/pretrained/) directory. Let us run the deployment for a few
+of them:
+```bash
+# Simple single layer network
+python3 deploy_checkpoint.py -C pretrained/shd/ -o \
+    ../hardware_accelerator/sim/tb_yana_top/files/ \
+    -e shd_unpruned -n 10
+# Single layer network (pruned to 60% sparsity)
+python3 deploy_checkpoint.py -C pretrained/shd_pruning/ -o \
+    ../hardware_accelerator/sim/tb_yana_top/files/ \
+    -e shd_pruned_60 -n 10
+# Two layer network
+python3 deploy_checkpoint.py -C pretrained/shd_two_layer/ -o \
+    ../hardware_accelerator/sim/tb_yana_top/files/ \
+    -e shd_two_layer -n 10
+```
+Note that the two layer network occopies both available hidden cores of our 2x2
+multi-core setup. In the current version, layers get distributed to cores using
+a round-robin assignment (as shown by the output).
 
----
+## Using YANA - RTL Simulation
+To actually see YANA in action, we use Verilator to simulate the initialiazation
+and inference of SNNs. The testbench and `make` setup for the simulation can be
+found in the [`hardware_accelerator/sim/tb_yana_top`](hardware_accelerator/sim/tb_yana_top/) directory. To run the
+simulation using the example network (without running any training or
+deployment), execute
+```bash
+# Inside hardware_accelerator/sim/tb_yana_top
+make run-fast
+```
+Verilator supports waveform outputs readable by waveform viewers like
+[GtkWave](https://github.com/gtkwave/gtkwave) or
+[Surfer](https://surfer-project.org/). To output waveform `.fst` files, run
+```bash
+make run-trace
+```
+which outputs a `waveform.fst` file in the simulation directory.
+
+Let's compare the inference of multiple networks with each other, namely the
+pretrained networks deployed in the [previous
+section](#deploy-pre-trained-networks):
+```bash
+DATASETS=shd_unpruned,shd_pruned_60,shd_two_layer NUM_SAMPLES=10 make run-fast
+```
+The summary shows that the pruned network effectively scales linearly in latency
+with the pruning ratio. Also, the two layer network takes the same amount of
+time as the single layer network, because each layer is processed concurrently
+on different cores.
+
+## Customization
+
+### Use other datasets
+- Use the N-MNIST dataset by selecting the [N-MNIST config file](software_framework/yana/train/config/nmnist_feed_forward.yaml):
+  ```bash
+  python3 train_network.py -c yana/train/config/nmnist_feed_forward.yaml
+  ```
+
+### Change the network configuration
+- More or less neurons per layer — set [`out_features`](software_framework/yana/train/config/shd_feed_forward.yaml#L37) in the hidden `Linear` layer of the config file
+- Other neuron parameters — modify [`tau_inv_mem`, `threshold`, and `neuron_type`](software_framework/yana/train/config/shd_feed_forward.yaml#L39-L43) in the `create_hidden_cell` block of the config file
+  - **NOTE:** all neurons mapped on the hidden layer must have the same neuron parameters (`tau`, `threshold`, `neuron_type`)
+
+### Change the training parameters
+- Different optimizer — change [`optimizer`](software_framework/yana/train/config/shd_feed_forward.yaml#L64) in `optimizer_cfg` of the config file (alternatives: `AdamW`, `RMSprop`, `SGD`)
+- Other learning rate scheduler — change [`lr_scheduler` and `lr_scheduler_cfg`](software_framework/yana/train/config/shd_feed_forward.yaml#L67-L72) in the config file, or implement a custom one in [lr_scheduler.py](software_framework/yana/train/model/lr_scheduler.py)
 
 ## Acknowledgments
 
@@ -287,12 +232,9 @@ Work on and with YANA was funded by the Federal Ministry of Research, Technology
 
 ## License
 
-- **Software** (in `software_deployment/`, `software_framework/` and `tutorial/`) is licensed under EUPL 1.2, see [LICENSE-software](LICENSE-software).
-- **Hardware** (in `hardware_accelerator/rtl`) is licensed under CERN-OHL-W, see [LICENSE-hardware](LICENSE-hardware).
-  - This project uses hardware design sources from the third party project [FPGADesignElements](https://github.com/laforest/FPGADesignElements), which is licensed by Charles Eric LaForest, PhD under MIT, see [LICENSE-elements](./hardware_accelerator/rtl/elements/LICENSE-elements).
-- **Vivado Project Sources and IP:** The project configuration files (`.tcl`), block designs (`.bd`) and IP configuration files (`.xci`) located in `hardware_accelerator/block_design/`, `hardware_accelerator/ip/`, and `hardware_deployment/` represent the open-source configuration of this design and are licensed under CERN-OHL-W.
-> [!WARNING]
-> **Important Notice regarding Generated Artifacts:** The actual hardware description (HDL), netlists, design checkpoints, and bitstreams *generated* by AMD/Xilinx Vivado from these source files contain proprietary Intellectual Property owned by AMD/Xilinx. These generated output products are subject to the AMD/Xilinx End User License Agreement (EULA) and Core License Agreement. They are typically restricted to use on AMD/Xilinx devices and are **not** covered by the CERN-OHL-W license.
+- **Software** (in [`software_framework/`](software_framework/)) is licensed under EUPL 1.2, see [LICENSE-software](LICENSE-software).
+- **Hardware** (in [`hardware_accelerator/`](hardware_accelerator/)) is licensed under CERN-OHL-W, see [LICENSE-hardware](LICENSE-hardware).
+  - Portions of the hardware RTL are derived from third-party MIT-licensed projects: [FPGADesignElements](https://github.com/laforest/FPGADesignElements) ([LICENSE-elements](./hardware_accelerator/rtl/elements/LICENSE-elements)) and [RANC](https://github.com/UA-RCL/RANC) ([LICENSE-ranc](./hardware_accelerator/rtl/noc/LICENSE-ranc)).
 
 ## Citation
 

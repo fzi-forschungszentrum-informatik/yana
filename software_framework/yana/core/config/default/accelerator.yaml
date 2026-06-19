@@ -1,0 +1,33 @@
+# Mesh configuration
+num_cores_x: 2
+num_cores_y: 2
+
+# Common core configuration
+neurons_per_core: 1024
+routes_per_core:  65536
+weights_per_core: 65536
+
+timestep_width: 16
+weight_sum_width: 31
+instruction_width: 8
+param_width: 56
+
+# Initialization
+mem_init_targets:
+  synapse_weights: 0
+  axon_mapping: 1
+  axon_routes: 2
+  spike_threshold: 3
+  tau_mem_inv: 4
+  leak_lut: 5
+
+# Core-specific configuration
+core_configs:
+  0: "yana/core/config/default/core_input.yaml"
+  1: "yana/core/config/default/core_hidden.yaml"
+  2: "yana/core/config/default/core_hidden.yaml"
+  3: "yana/core/config/default/core_output.yaml"
+
+
+# Platform configuration
+platform_config: "yana/core/config/default/platform.yaml"

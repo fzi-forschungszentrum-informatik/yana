@@ -2,597 +2,764 @@
 
 `include "global_params.vh"
 
-module neuron_wrapper #(
-    parameter EMIT_SPIKES = 1,
-    parameter LEAK_STATES = 1,
-    parameter HOT_NEURON_FIFO_DATA_WIDTH = 11,  // 1024 Neurons + Flag Bit
+module NeuronWrapper #(
+  parameter CORE_ID_X   = 0,
+  parameter CORE_ID_Y   = 0,
+  parameter EMIT_SPIKES = 1,
+  parameter LEAK_STATES = 1,
+  parameter NEURON_STATE_INIT_FILE = "",
+  parameter TIMESTEP_RAM_INIT_FILE = "",
 
-    parameter WEIGHT_SUM_ADDR_WIDTH = HOT_NEURON_FIFO_DATA_WIDTH - 1,
-    parameter WEIGHT_SUM_DATA_WIDTH = 15,
-    parameter WEIGHT_SUM_DECIMALS   = 7,
+  parameter VENDOR = VENDOR_G,
+  parameter HOT_NEURON_FIFO_DATA_WIDTH = CORE_NEURON_ID_WIDTH_G,
 
-    parameter SPIKE_OUT_FIFO_DATA_WIDTH = HOT_NEURON_FIFO_DATA_WIDTH - 1,  // 1024 Neurons
+  parameter WEIGHT_SUM_ADDR_WIDTH  = CORE_WEIGHT_SUM_RAM_ADDR_WIDTH_G,
+  parameter WEIGHT_SUM_DATA_WIDTH  = CORE_WEIGHT_SUM_RAM_DATA_WIDTH_G - 1,
 
-    parameter TAU_MEM_INV_DATA_WIDTH = TAU_MEM_INV_DATA_WIDTH_G,
-    parameter TAU_MEM_INV_DECIMALS   = TAU_MEM_INV_DECIMALS_G,
-    parameter TAU_MEM_INV            = TAU_MEM_INV_G,
+  parameter SPIKE_OUT_FIFO_DATA_WIDTH = CORE_NEURON_ID_WIDTH_G,
 
-    parameter NEURON_STATE_ADDR_WIDTH = NEURON_STATE_ADDR_WIDTH_G,
-    parameter NEURON_STATE_DATA_WIDTH = NEURON_STATE_DATA_WIDTH_G,
-    parameter NEURON_STATE_DECIMALS   = NEURON_STATE_DECIMALS_G,
-    parameter NEURON_STATE_INIT_FILE  = NEURON_STATE_INIT_FILE_G,
+  parameter SPIKE_THRESHOLD_WIDTH = SPIKE_THRESHOLD_WIDTH_G,
+  parameter TAU_MEM_INV_WIDTH     = TAU_MEM_INV_WIDTH_G,
 
-    parameter TIMESTEP_WIDTH          = TIMESTEP_WIDTH_G,
-    parameter TIMESTEP_RAM_ADDR_WIDTH = TIMESTEP_RAM_ADDR_WIDTH_G,
-    parameter TIMESTEP_RAM_DATA_WIDTH = TIMESTEP_RAM_DATA_WIDTH_G,
-    parameter TIMESTEP_RAM_INIT_FILE  = TIMESTEP_RAM_INIT_FILE_G,
+  parameter NEURON_STATE_ADDR_WIDTH  = CORE_NEURON_ID_WIDTH_G,
+  parameter NEURON_STATE_DATA_WIDTH  = NEURON_STATE_WIDTH_G,
 
-    parameter RAM_LEAK_ADDR_WIDTH     = RAM_LEAK_ADDR_WIDTH_G,
-    parameter RAM_LEAK_DATA_WIDTH     = RAM_LEAK_DATA_WIDTH_G,
-    parameter RAM_LEAK_DECIMALS       = RAM_LEAK_DECIMALS_G,
-    parameter RAM_LEAK_INIT_MEM_FILE  = RAM_LEAK_INIT_MEM_FILE_G
-) (
-    input  clk_i,
-    input  rst_i,
-    input  rst_mems_i,
-    output rst_done_o,
-    input  [TIMESTEP_WIDTH-1:0] timestep_i,
-    input  enable_i,
-    output done_o,
+  parameter TIMESTEP_WIDTH          = TIMESTEP_WIDTH_G,
+  parameter TIMESTEP_RAM_ADDR_WIDTH = CORE_NEURON_ID_WIDTH_G,
+  parameter TIMESTEP_RAM_DATA_WIDTH = TIMESTEP_WIDTH_G,
 
-    // Connection to Hot Neuron FIFO
-    output reg hot_neuron_fifo_re_o,
-    input [HOT_NEURON_FIFO_DATA_WIDTH  -1 : 0] hot_neuron_fifo_data_i,
-    input hot_neuron_fifo_read_valid_i,
+  parameter RAM_LEAK_ADDR_WIDTH    = RAM_LEAK_ADDR_WIDTH_G,
+  parameter RAM_LEAK_DATA_WIDTH    = RAM_LEAK_DATA_WIDTH_G,
+  parameter RAM_LEAK_INIT_MEM_FILE = RAM_LEAK_INIT_FILE_G,
 
-    // Connection to Spike Out FIFO
-    output reg spike_out_fifo_we_o,
-    output reg [SPIKE_OUT_FIFO_DATA_WIDTH  -1 : 0] spike_out_fifo_data_o,
+  parameter CYCLES_RAISE_SLEEP = CYCLES_RAISE_SLEEP_G,
 
-    // Connection to Quad Port MUX RAM
-    output reg weight_sum_ram_we_o,
-    output reg [WEIGHT_SUM_ADDR_WIDTH -1 : 0] weight_sum_ram_waddr_o,
-    output reg [WEIGHT_SUM_DATA_WIDTH -1 : 0] weight_sum_ram_data_o,
+  parameter PKT_CTRL_RQ_WORD_WIDTHS_SUM = PKT_CMD_RQ_WORD_WIDTHS_SUM_G
+) (     
+  input  logic                      clk_i,
+  input  logic                      rst_i,
+  input  logic                      enable_i,
+  input  logic                      init_i,
+  input  logic [TIMESTEP_WIDTH-1:0] timestep_i,
+  input  logic                      core_came_out_of_reset_i,
+  output logic                      done_o,
 
-    output reg weight_sum_ram_re_o,
-    output reg [WEIGHT_SUM_ADDR_WIDTH -1 : 0] weight_sum_ram_raddr_o,
-    input      [WEIGHT_SUM_DATA_WIDTH -1 : 0] weight_sum_ram_data_i,
+  output logic                                  hot_neuron_in_ready_o,
+  input  logic                                  hot_neuron_in_valid_i,
+  input  logic [HOT_NEURON_FIFO_DATA_WIDTH-1:0] hot_neuron_in_data_i,
 
-    // Read out connection for neuron state RAM
-    input                                    neuron_state_read_req_i,
-    input                                    neuron_state_read_fu_i,    // Force update of neuron states
-    input [NEURON_STATE_ADDR_WIDTH-1:0]      neuron_state_read_start_i,
-    input [NEURON_STATE_ADDR_WIDTH-1:0]      neuron_state_read_end_i,
-    output reg [NEURON_STATE_ADDR_WIDTH-1:0] neuron_state_read_id_o,
-    output reg [NEURON_STATE_DATA_WIDTH-1:0] neuron_state_read_data_o,
-    output reg                               neuron_state_read_valid_o,
-    output reg                               neuron_state_read_last_o,
-    output reg                               neuron_state_read_done_o,
+  input  logic                                 spiking_neuron_out_ready_i,
+  output logic                                 spiking_neuron_out_valid_o,
+  output logic [SPIKE_OUT_FIFO_DATA_WIDTH-1:0] spiking_neuron_out_data_o,
 
-    // Write connection to neuron leak RAM
-    input                                    neuron_leak_ram_write_en_i,
-    input      [RAM_LEAK_ADDR_WIDTH-1:0]     neuron_leak_ram_addr_i,
-    input      [RAM_LEAK_DATA_WIDTH-1:0]     neuron_leak_ram_data_i,
+  output logic                             weight_sum_ram_we_o,
+  output logic [WEIGHT_SUM_ADDR_WIDTH-1:0] weight_sum_ram_waddr_o,
+  output logic [WEIGHT_SUM_DATA_WIDTH-1:0] weight_sum_ram_data_o,
+  output logic                             weight_sum_ram_re_o,
+  output logic [WEIGHT_SUM_ADDR_WIDTH-1:0] weight_sum_ram_raddr_o,
+  input  logic [WEIGHT_SUM_DATA_WIDTH-1:0] weight_sum_ram_data_i,
 
-    // Write connection for neuron tau_mem
-    input [TAU_MEM_INV_DATA_WIDTH-1:0]       neuron_tau_mem_inv
+  input logic                             spike_threshold_reg_ce_i,
+  input logic [SPIKE_THRESHOLD_WIDTH-1:0] spike_threshold_reg_data_i,
+
+  input logic                         tau_mem_inv_reg_ce_i,
+  input logic [TAU_MEM_INV_WIDTH-1:0] tau_mem_inv_reg_data_i,
+
+  input logic                           leak_lut_we_i,
+  input logic [RAM_LEAK_ADDR_WIDTH-1:0] leak_lut_addr_i,
+  input logic [RAM_LEAK_DATA_WIDTH-1:0] leak_lut_data_i,
+
+  output logic                                   forced_update_in_ready_o,
+  input  logic                                   forced_update_in_valid_i,
+  input  logic [PKT_CTRL_RQ_WORD_WIDTHS_SUM-1:0] forced_update_in_data_i,
+  output logic                                   state_readout_in_ready_o,
+  input  logic                                   state_readout_in_valid_i,
+  input  logic [PKT_CTRL_RQ_WORD_WIDTHS_SUM-1:0] state_readout_in_data_i,
+  output logic                                   state_reset_in_ready_o,
+  input  logic                                   state_reset_in_valid_i,
+  input  logic [PKT_CTRL_RQ_WORD_WIDTHS_SUM-1:0] state_reset_in_data_i,
+
+  input  logic        state_readout_out_ready_i,
+  output logic        state_readout_out_valid_o,
+  output pkt_noc_ro_s state_readout_out_data_o
 );
 
-  // ------------- DEFINE SIGNALS -------------
+  //============================================================================
+  // Declarations
+  //============================================================================
 
-  // Reset signals
-  reg rst_states_done_r;
-  reg rst_timesteps_done_r;
+  //============================================================================
+  // Type Declarations
+  //============================================================================
 
-  reg rst_state_ram_write_en_r;
-  reg [NEURON_STATE_ADDR_WIDTH -1 : 0] rst_state_ram_write_addr_r;
+  typedef enum logic [2:0] {
+    IDLE,
+    INITIALIZING,
+    PROCESSING,
+    CTRL_FORCED_UPDATE,
+    CTRL_STATE_READOUT,
+    CTRL_STATE_RESET
+  } master_state_e;
 
-  reg rst_timestep_ram_write_en_r;
-  reg [TIMESTEP_RAM_ADDR_WIDTH -1 : 0] rst_timestep_ram_write_addr_r;
+  typedef enum logic [1:0] {
+    AWAKE,
+    COUNTING_TO_SLEEP,
+    SLEEPING
+  } sleep_state_e;
 
-  // Multiplexed RAM write signals
-  reg mux_state_ram_write_en_r;
-  reg [NEURON_STATE_ADDR_WIDTH -1 : 0] mux_state_ram_write_addr_r;
-  reg [NEURON_STATE_DATA_WIDTH -1 : 0] mux_state_ram_data_in_r;
+  master_state_e state_q, state_d;
+  sleep_state_e sleep_state_q, sleep_state_d;
 
-  reg mux_timestep_ram_write_en_r;
-  reg [TIMESTEP_RAM_ADDR_WIDTH -1 : 0] mux_timestep_ram_write_addr_r;
-  reg [TIMESTEP_RAM_DATA_WIDTH -1 : 0] mux_timestep_ram_data_in_r;
+  typedef struct packed {
+    logic [NEURON_STATE_ADDR_WIDTH-1:0] end_addr;
+    logic [NEURON_STATE_ADDR_WIDTH-1:0] start_addr;
+    logic [TIMESTEP_WIDTH-1:0]          timestep;
+  } ctrl_rq_data_s;
 
-  // Signals to connect with state RAM
-  reg state_ram_read_en_r;
-  reg [NEURON_STATE_ADDR_WIDTH -1 : 0] state_ram_read_addr_r;
-  wire [NEURON_STATE_DATA_WIDTH -1 : 0] state_ram_data_out_w;
+  //============================================================================
+  // Signal Declarations
+  //============================================================================
+  
+  logic state_ram_sleep;
+  logic state_ram_awake;
+  logic timestep_ram_sleep;
+  logic timestep_ram_awake;
+  logic all_memories_awake;
+  logic [$clog2(CYCLES_RAISE_SLEEP+1)-1:0] sleep_counter_q, sleep_counter_d;
 
-  reg state_ram_write_en_r;
-  reg [NEURON_STATE_ADDR_WIDTH -1 : 0] state_ram_write_addr_r;
-  reg [NEURON_STATE_DATA_WIDTH -1 : 0] state_ram_data_in_r;
+  logic                               ram_addr_gen_enable;
+  logic                               ram_addr_gen_start;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] ram_addr_gen_start_addr;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] ram_addr_gen_end_addr;
+  logic                               ram_addr_gen_valid;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] ram_addr_gen_addr;
+  logic                               ram_addr_gen_idle;
 
-  // Signals to connect with timesteps RAM
-  reg timestep_ram_read_en_r;
-  reg [TIMESTEP_RAM_ADDR_WIDTH -1 : 0] timestep_ram_read_addr_r;
-  wire [TIMESTEP_RAM_DATA_WIDTH -1 : 0] timestep_ram_data_out_w;
+  localparam STATE_PACKETIZER_INPUT_WIDTH = HOT_NEURON_FIFO_DATA_WIDTH + NEURON_STATE_DATA_WIDTH;
+  logic                                    state_packetizer_done;
+  logic                                    state_packetizer_input_ready; 
+  logic                                    state_packetizer_input_valid;
+  logic [STATE_PACKETIZER_INPUT_WIDTH-1:0] state_packetizer_input_data;
+  logic                                    state_packetizer_output_ready;
+  logic                                    state_packetizer_output_valid;
+  pkt_noc_ro_s                             state_packetizer_output_data;
 
-  reg timestep_ram_write_en_r;
-  reg [TIMESTEP_RAM_ADDR_WIDTH -1 : 0] timestep_ram_write_addr_r;
-  reg [TIMESTEP_RAM_DATA_WIDTH -1 : 0] timestep_ram_data_in_r;
+  logic                               addr_decoder_hit;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] addr_decoder_base_d;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] addr_decoder_base_q;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] addr_decoder_bound_d;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] addr_decoder_bound_q;
 
-  // Signals to connect to neuron logic implementation
-  wire inst_neuron_idle_w;
+  logic                               state_ram_read_en_q;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] state_ram_read_addr_q;
+  logic [NEURON_STATE_DATA_WIDTH-1:0] state_ram_data_out;
+  logic                               state_ram_write_en_q;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] state_ram_write_addr_q;
+  logic [NEURON_STATE_DATA_WIDTH-1:0] state_ram_data_in_q;
+  
+  logic                               timestep_ram_read_en_q;
+  logic [TIMESTEP_RAM_ADDR_WIDTH-1:0] timestep_ram_read_addr_q;
+  logic [TIMESTEP_RAM_DATA_WIDTH-1:0] timestep_ram_data_out;
+  logic                               timestep_ram_write_en_q;
+  logic [TIMESTEP_RAM_ADDR_WIDTH-1:0] timestep_ram_write_addr_q;
+  logic [TIMESTEP_RAM_DATA_WIDTH-1:0] timestep_ram_data_in_q;
 
-  reg inst_neuron_valid_in_r;
-  reg [NEURON_STATE_ADDR_WIDTH -1 : 0] inst_neuron_id_in_r;
-  reg [NEURON_STATE_DATA_WIDTH -1 : 0] inst_neuron_state_in_r;
-  reg [TIMESTEP_RAM_DATA_WIDTH -1 : 0] inst_neuron_timesteps_in_r;
-  reg [WEIGHT_SUM_DATA_WIDTH -1 : 0] inst_neuron_weight_sum_in_r;
+  logic [SPIKE_THRESHOLD_WIDTH-1:0] threshold_reg_data_out;
+  logic [TAU_MEM_INV_WIDTH-1:0] tau_mem_inv_reg_data_out;
 
-  wire inst_neuron_output_valid_w;
-  wire [NEURON_STATE_ADDR_WIDTH -1 : 0] inst_neuron_neuron_id_out_w;
-  wire [NEURON_STATE_DATA_WIDTH -1 : 0] inst_neuron_neuron_state_out_w;
-  wire inst_neuron_spike_out_w;
+  logic                               inst_neuron_done;
+  logic                               inst_neuron_in_valid_d;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] inst_neuron_in_id_d;
+  logic [NEURON_STATE_DATA_WIDTH-1:0] inst_neuron_in_state_d;
+  logic [TIMESTEP_RAM_DATA_WIDTH-1:0] inst_neuron_in_timesteps_d;
+  logic [WEIGHT_SUM_DATA_WIDTH-1:0]   inst_neuron_in_weight_sum_d;
+  logic                               inst_neuron_in_ready_d;
+  logic                               inst_neuron_out_ready_d;
+  logic                               inst_neuron_out_valid_d;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] inst_neuron_out_id_d;
+  logic [NEURON_STATE_DATA_WIDTH-1:0] inst_neuron_out_state_d;
+  logic                               inst_neuron_out_spike_d;
+  
+  logic data_pipeline_done_d;
+  logic ctrl_pipeline_pending_now_d;
+  logic ctrl_pipeline_pending_past_d;
+  logic ctrl_pipeline_pending_d;
+  logic ctrl_cmd_started_q, ctrl_cmd_started_d;
+  logic pipelines_done_d;
+  logic [TIMESTEP_WIDTH-1:0] last_reset_timestep_d;
+  logic [TIMESTEP_WIDTH-1:0] last_reset_timestep_q;
 
+  ctrl_rq_data_s forced_update_in_data;
+  ctrl_rq_data_s state_readout_in_data;
+  ctrl_rq_data_s state_reset_in_data;
+  assign forced_update_in_data = ctrl_rq_data_s'(forced_update_in_data_i);
+  assign state_readout_in_data = ctrl_rq_data_s'(state_readout_in_data_i);
+  assign state_reset_in_data   = ctrl_rq_data_s'(state_reset_in_data_i);
 
-  // Pipeline registers
-  reg [HOT_NEURON_FIFO_DATA_WIDTH -2 :0] neuron_addr_pipeline_reg_0; // -2 due to timestep bit of Hot Neuron FIFO
-  reg [HOT_NEURON_FIFO_DATA_WIDTH -2 :0] neuron_addr_pipeline_reg_1; // -2 due to timestep bit of Hot Neuron FIFO
-  reg [1:0] pipeline_exec;
+  //============================================================================
+  // Main Processing Pipeline
+  //============================================================================
 
-  // Forced update registers
-  reg [1:0] fu_pipeline_exec;
-  reg [NEURON_STATE_ADDR_WIDTH-1:0] fu_neuron_id_counter;
+  //============================================================================
+  // Input Skid Buffer
+  //============================================================================
 
-  reg [NEURON_STATE_ADDR_WIDTH-1:0] fu_neuron_addr_pipeline_reg_0;
-  reg [NEURON_STATE_ADDR_WIDTH-1:0] fu_neuron_addr_pipeline_reg_1;
-  reg fu_processing_done;
-  reg fu_processing_active;
+  logic input_skid_input_ready;
+  logic input_skid_input_valid;
+  logic [HOT_NEURON_FIFO_DATA_WIDTH-1:0] input_skid_input_data;
+  logic input_skid_output_ready;
+  logic input_skid_output_valid;
+  logic [HOT_NEURON_FIFO_DATA_WIDTH-1:0] input_skid_output_data;
 
-  // Neuron state read-out registers
-  reg neuron_state_read_active;
-  reg neuron_state_read_done;
-  assign neuron_state_read_data_o = state_ram_data_out_w;
+  Pipeline_Skid_Buffer #(
+    .WORD_WIDTH     (HOT_NEURON_FIFO_DATA_WIDTH),
+    .CIRCULAR_BUFFER(0)
+  ) u_input_skid_buffer (
+    .clock       (clk_i),
+    .clear       (rst_i),
+    .input_ready (input_skid_input_ready),
+    .input_valid (input_skid_input_valid),
+    .input_data  (input_skid_input_data),
+    .output_ready(input_skid_output_ready),
+    .output_valid(input_skid_output_valid),
+    .output_data (input_skid_output_data)
+  );
 
-  // ------------- DONE Signals -------------
+  //============================================================================
+  // Stage 1: Neuron State Lookup
+  //============================================================================
 
-  wire calculation_done_w;
-  reg timestep_done;
+  logic stage1_busy_q;
+  logic stage1_output_ready, stage1_output_ready_q;
+  logic stage1_output_valid, stage1_output_valid_q, stage1_output_valid_qq;
+  logic [((HOT_NEURON_FIFO_DATA_WIDTH +
+           WEIGHT_SUM_DATA_WIDTH +
+           NEURON_STATE_DATA_WIDTH +
+           TIMESTEP_RAM_DATA_WIDTH)
+           -1):0] stage1_output_data, stage1_output_data_qq;
+  
+  logic [HOT_NEURON_FIFO_DATA_WIDTH-1:0] stage1_neuron_addr_q;
 
-  // Is high if all inputs of the Hot Neuron FIFO are processed and results are written to memory
-  assign calculation_done_w = timestep_done & ~|pipeline_exec & inst_neuron_idle_w & ~state_ram_write_en_r;
+  assign input_skid_output_ready = stage1_output_ready && ~stage1_busy_q;
 
-  assign done_o = calculation_done_w;
-
-  // Force update done
-  wire fu_calculation_done_w;
-
-  assign fu_calculation_done_w    = fu_processing_done & ~|fu_pipeline_exec & inst_neuron_idle_w & ~state_ram_write_en_r;
-  assign neuron_state_read_done_o = (fu_calculation_done_w | !neuron_state_read_fu_i) & neuron_state_read_done;
-
-  // Reset done
-  assign rst_done_o = rst_states_done_r & rst_timesteps_done_r;
-
-  // ------------- LOGIC -------------
-
-  //
-  // Functional logic
-  //
-  always @(posedge clk_i) begin
+  always_ff @(posedge clk_i) begin
     if (rst_i) begin
-      hot_neuron_fifo_re_o <= 1'b0;
-      spike_out_fifo_we_o <= 1'b0;
-      //spike_out_fifo_data_o <= 0;
-      //weight_sum_ram_we_o <= 1'b0;
-      //weight_sum_ram_waddr_o <= 0;
-      //weight_sum_ram_data_o <= 0;
-      //weight_sum_ram_re_o <= 1'b0;
-      //weight_sum_ram_raddr_o <= 0;
-      neuron_state_read_id_o <= 0;
-      //neuron_state_read_data_o <= 0;
-      neuron_state_read_valid_o <= 0;
-      neuron_state_read_last_o <= 0;
-      state_ram_read_en_r <= 1'b0;
-      state_ram_read_addr_r <= 0;
-      state_ram_write_en_r <= 1'b0;
-      state_ram_write_addr_r <= 0;
-      state_ram_data_in_r <= 0;
-      timestep_ram_read_en_r <= 1'b0;
-      timestep_ram_read_addr_r <= 0;
-      timestep_ram_write_en_r <= 1'b0;
-      timestep_ram_write_addr_r <= 0;
-      timestep_ram_data_in_r <= 0;
-      inst_neuron_valid_in_r <= 1'b0;
-      inst_neuron_id_in_r <= 0;
-      inst_neuron_state_in_r <= 0;
-      inst_neuron_timesteps_in_r <= 0;
-      inst_neuron_weight_sum_in_r <= 0;
-      neuron_addr_pipeline_reg_0 <= 0;
-      neuron_addr_pipeline_reg_1 <= 0;
-      pipeline_exec <= 0;
-      timestep_done <= 1'b0;
-      fu_pipeline_exec <= 2'b0;
-      fu_neuron_id_counter <= {NEURON_STATE_ADDR_WIDTH{1'b0}};
-      fu_neuron_addr_pipeline_reg_0 <= {NEURON_STATE_ADDR_WIDTH{1'b0}};
-      fu_neuron_addr_pipeline_reg_1 <= {NEURON_STATE_ADDR_WIDTH{1'b0}};
-      fu_processing_active <= 1'b0;
-      fu_processing_done <= 1'b0;
-      neuron_state_read_active <= 1'b0;
-      neuron_state_read_done <= 1'b0;
+      stage1_busy_q          <= 1'b0;
+      stage1_output_ready_q  <= 1'b0;
+      stage1_output_valid_q  <= 1'b0;
+      stage1_output_valid_qq <= 1'b0;
     end else begin
-
-      if (enable_i) begin
-
-        // Pipeline Step 1: Fetch Data from Hot Neuron FIFO and trigger memory reads
-        if (!timestep_done) begin
-
-          hot_neuron_fifo_re_o <= 1'b1;
-
-          if (hot_neuron_fifo_read_valid_i) begin
-            if (hot_neuron_fifo_data_i[0] == timestep_i[0]) begin // indicates that all neurons of the current timesteps are processed
-              // No processing here, since this is a marker entry from the synapse module
-              timestep_done <= 1;
-              hot_neuron_fifo_re_o <= 1'b0;
-
-              pipeline_exec <= {pipeline_exec[0], 1'b0};
-              weight_sum_ram_re_o <= 1'b0;
-              state_ram_read_en_r <= 1'b0;
-              timestep_ram_read_addr_r <= 0;
-              timestep_ram_read_en_r <= 1'b0;
-
-            end else begin
-              // Process neuron
-              pipeline_exec <= {pipeline_exec[0], 1'b1};
-              neuron_addr_pipeline_reg_0 <= hot_neuron_fifo_data_i[HOT_NEURON_FIFO_DATA_WIDTH-1 : 1];
-
-              weight_sum_ram_raddr_o <= hot_neuron_fifo_data_i[HOT_NEURON_FIFO_DATA_WIDTH-1 : 1];
-              weight_sum_ram_re_o <= 1'b1;
-
-              state_ram_read_addr_r <= hot_neuron_fifo_data_i[HOT_NEURON_FIFO_DATA_WIDTH-1 : 1];
-              state_ram_read_en_r <= 1'b1;
-
-              timestep_ram_read_addr_r <= hot_neuron_fifo_data_i[HOT_NEURON_FIFO_DATA_WIDTH-1 : 1];
-              timestep_ram_read_en_r <= 1'b1;
-            end
-
-          end else begin
-            pipeline_exec <= {pipeline_exec[0], 1'b0};
-            weight_sum_ram_re_o <= 1'b0;
-            state_ram_read_en_r <= 1'b0;
-            timestep_ram_read_addr_r <= 0;
-            timestep_ram_read_en_r <= 1'b0;
-          end
-
-        end else begin
-          pipeline_exec <= {pipeline_exec[0], 1'b0};
-        end
-
-        // Pipeline step 2: Wait for memory reads
-        if (pipeline_exec[0]) begin
-          neuron_addr_pipeline_reg_1 <= neuron_addr_pipeline_reg_0;
-        end
-
-        // Pipeline step 3: Put memory output in neuron instance to do calculations and reset weight sum
-        if (pipeline_exec[1]) begin
-          inst_neuron_id_in_r <= neuron_addr_pipeline_reg_1;
-          inst_neuron_state_in_r <= state_ram_data_out_w;
-          inst_neuron_weight_sum_in_r <= weight_sum_ram_data_i;
-          inst_neuron_timesteps_in_r <= timestep_i - timestep_ram_data_out_w;
-          inst_neuron_valid_in_r <= 1;
-
-          // reset weight sum
-          weight_sum_ram_waddr_o <= neuron_addr_pipeline_reg_1;
-          weight_sum_ram_data_o <= 0;
-          weight_sum_ram_we_o <= 1;
-        end else begin
-          inst_neuron_valid_in_r <= 0;
-          weight_sum_ram_we_o <= 0;
-        end
-
-        // Neuron Pipeline is processing input ...
-
-        // Write results to memories and Spike Out FIFO
-        if (inst_neuron_output_valid_w) begin
-          // Put spiking neuron address to Spike Out FIFO
-          if (inst_neuron_spike_out_w == 1'b1) begin
-            spike_out_fifo_data_o <= inst_neuron_neuron_id_out_w;
-            spike_out_fifo_we_o   <= 1'b1;
-          end else begin
-            spike_out_fifo_we_o <= 1'b0;
-          end
-
-          state_ram_write_addr_r <= inst_neuron_neuron_id_out_w;
-          state_ram_data_in_r <= inst_neuron_neuron_state_out_w;
-          state_ram_write_en_r <= 1'b1;
-
-          timestep_ram_write_addr_r <= inst_neuron_neuron_id_out_w;
-          timestep_ram_data_in_r <= timestep_i;
-          timestep_ram_write_en_r <= 1'b1;
-        end else begin
-          spike_out_fifo_we_o <= 1'b0;
-          state_ram_write_en_r <= 1'b0;
-          timestep_ram_write_addr_r <= 0;
-          timestep_ram_write_en_r <= 1'b0;
-        end
-
-      end else begin  // !enable_i
-
-        // Reset normal operation variables
-        timestep_done   <= 0;
-
-        // Disable all read/write enables by default
-        inst_neuron_valid_in_r  <= 1'b0;
-        state_ram_read_en_r     <= 1'b0;
-        state_ram_write_en_r    <= 1'b0;
-        timestep_ram_read_en_r  <= 1'b0;
-        timestep_ram_write_en_r <= 1'b0;
-
-        // Neuron state output logic
-
-        if (neuron_state_read_req_i) begin
-
-          // Forced neuron state update required
-          if (neuron_state_read_fu_i) begin
-
-            if (!fu_processing_done) begin
-              if (!fu_processing_active) begin
-                fu_processing_active  <= 1;
-                fu_neuron_id_counter  <= neuron_state_read_start_i;
-                state_ram_read_addr_r <= 0;
-              end else begin
-                // Pipeline Step 1: Read data from state and timestep RAM
-                fu_pipeline_exec <= {fu_pipeline_exec[0], 1'b1};
-                fu_neuron_addr_pipeline_reg_0 <= fu_neuron_id_counter;
-
-                state_ram_read_addr_r      <= fu_neuron_id_counter;
-                state_ram_read_en_r        <= 1'b1;
-                timestep_ram_read_addr_r   <= fu_neuron_id_counter;
-                timestep_ram_read_en_r     <= 1'b1;
-
-                if (state_ram_read_addr_r < neuron_state_read_end_i) begin
-                  fu_neuron_id_counter <= fu_neuron_id_counter + 1;
-                end else begin
-                  fu_processing_active   <= 0;
-                  fu_processing_done     <= 1;
-                  fu_pipeline_exec       <= {fu_pipeline_exec[0], 1'b0};
-
-                  state_ram_read_en_r    <= 1'b0;
-                  timestep_ram_read_en_r <= 1'b0;
-                end
-              end
-            end else begin
-              fu_processing_active <= 0;
-              fu_pipeline_exec     <= {fu_pipeline_exec[0], 1'b0};
-            end
-
-            // Pipeline step 2: Wait for memory reads
-            if (fu_pipeline_exec[0]) begin
-              fu_neuron_addr_pipeline_reg_1 <= fu_neuron_addr_pipeline_reg_0;
-            end
-
-            // Pipeline step 3: Put memory output in neuron instance to do calculations
-            if (fu_pipeline_exec[1]) begin
-              inst_neuron_id_in_r         <= fu_neuron_addr_pipeline_reg_1;
-              inst_neuron_state_in_r      <= state_ram_data_out_w;
-              inst_neuron_weight_sum_in_r <= {WEIGHT_SUM_DATA_WIDTH{1'b0}}; // No inputs
-              // Forced update uses previous timestep (timestep advances when execution completes).
-              inst_neuron_timesteps_in_r  <= (timestep_i - timestep_ram_data_out_w) - 1;
-              inst_neuron_valid_in_r      <= 1;
-            end else begin
-              inst_neuron_valid_in_r      <= 0;
-            end
-
-            // Neuron Pipeline is processing input ...
-
-            // Pipeline step 4: Write results to memories (no need to check for spikes, as no input is given)
-            if (inst_neuron_output_valid_w) begin
-              state_ram_write_addr_r <= inst_neuron_neuron_id_out_w;
-              state_ram_data_in_r    <= inst_neuron_neuron_state_out_w;
-              state_ram_write_en_r   <= 1'b1;
-
-              timestep_ram_write_addr_r <= inst_neuron_neuron_id_out_w;
-              timestep_ram_data_in_r    <= timestep_i - 1;
-              timestep_ram_write_en_r   <= 1'b1;
-            end else begin
-              state_ram_write_en_r    <= 1'b0;
-              timestep_ram_write_en_r <= 1'b0;
-            end
-          end
-
-          // Neuron state read-out (if forced update is done or not requested)
-          if ((fu_calculation_done_w | !neuron_state_read_fu_i) && !neuron_state_read_done) begin
-            state_ram_read_en_r <= 1;
-
-            if (!neuron_state_read_active) begin
-              neuron_state_read_active <= 1;
-              state_ram_read_addr_r    <= neuron_state_read_start_i;
-              neuron_state_read_id_o   <= 0;
-            end else begin
-              neuron_state_read_id_o    <= state_ram_read_addr_r;
-              neuron_state_read_valid_o <= 1;
-
-              if (neuron_state_read_id_o < neuron_state_read_end_i) begin
-                state_ram_read_addr_r <= state_ram_read_addr_r + 1;
-                if (neuron_state_read_id_o == neuron_state_read_end_i - 1) begin
-                  neuron_state_read_last_o <= 1;
-                end
-              end else begin
-                neuron_state_read_done    <= 1;
-                neuron_state_read_active  <= 0;
-                neuron_state_read_valid_o <= 0;
-                neuron_state_read_last_o  <= 0;
-                state_ram_read_en_r       <= 0;
-              end
-            end
-
-          end else begin
-            neuron_state_read_active  <= 0;
-            neuron_state_read_valid_o <= 0;
-            neuron_state_read_last_o  <= 0;
-          end
-
-        end else begin
-          // Reset forced neuron update variables
-          fu_processing_active  <= 0;
-          fu_processing_done    <= 0;
-          fu_pipeline_exec      <= 2'b0;
-          fu_neuron_id_counter  <= {NEURON_STATE_ADDR_WIDTH{1'b0}};
-          // Reset neuron state readout variables
-          neuron_state_read_active  <= 0;
-          neuron_state_read_done    <= 0;
-          neuron_state_read_valid_o <= 0;
-          neuron_state_read_last_o  <= 0;
-          neuron_state_read_id_o    <= 0;
-        end
+      stage1_output_ready_q  <= stage1_output_ready;
+      if (!stage1_output_ready && stage1_output_ready_q) begin
+        stage1_output_valid_q  <= 1'b0;
+        stage1_output_valid_qq <= stage1_output_valid_q;
+        stage1_output_data_qq  <= {stage1_neuron_addr_q,
+                                   weight_sum_ram_data_i,
+                                   state_ram_data_out,
+                                   timestep_ram_data_out};
+        stage1_busy_q <= 1'b1;
+      end else if (stage1_output_ready && stage1_busy_q) begin
+        stage1_busy_q <= 1'b0;
+      end else if (stage1_output_ready) begin
+        stage1_output_valid_q  <= input_skid_output_valid;
+        stage1_output_valid_qq <= stage1_output_valid_q;
+        stage1_neuron_addr_q   <= input_skid_output_data;
+        stage1_output_data_qq  <= {stage1_neuron_addr_q,
+                                   weight_sum_ram_data_i,
+                                   state_ram_data_out,
+                                   timestep_ram_data_out};
       end
     end
   end
 
-  //
-  // Reset logic
-  //
+  logic inter_skid1_input_ready;
+  assign stage1_output_ready = (state_q == CTRL_STATE_READOUT) ? state_packetizer_input_ready :
+                               /*default*/                       inter_skid1_input_ready;
 
-  // Multiplex the signals connected to the DP RAM
-  // to enable clearing it when resetting.
-  always_comb begin
-    if (rst_i & rst_mems_i) begin
-      mux_state_ram_write_en_r      = rst_state_ram_write_en_r;
-      mux_state_ram_write_addr_r    = rst_state_ram_write_addr_r;
-      mux_state_ram_data_in_r       = {NEURON_STATE_DATA_WIDTH{1'b0}};
+  assign weight_sum_ram_re_o      = input_skid_output_valid;
+  assign state_ram_read_en_q      = input_skid_output_valid;
+  assign timestep_ram_read_en_q   = input_skid_output_valid;
+  assign weight_sum_ram_raddr_o   = input_skid_output_data;
+  assign state_ram_read_addr_q    = input_skid_output_data;
+  assign timestep_ram_read_addr_q = input_skid_output_data;
 
-      mux_timestep_ram_write_en_r   = rst_timestep_ram_write_en_r;
-      mux_timestep_ram_write_addr_r = rst_timestep_ram_write_addr_r;
-      mux_timestep_ram_data_in_r    = {TIMESTEP_RAM_DATA_WIDTH{1'b0}};
-    end else begin
-      mux_state_ram_write_en_r      = state_ram_write_en_r;
-      mux_state_ram_write_addr_r    = state_ram_write_addr_r;
-      mux_state_ram_data_in_r       = state_ram_data_in_r;
+  assign stage1_output_valid = (stage1_busy_q) ? stage1_output_valid_qq :
+                                /*default*/      stage1_output_valid_q;
+  assign stage1_output_data  = (stage1_busy_q) ? stage1_output_data_qq  : {stage1_neuron_addr_q,
+                                                                          weight_sum_ram_data_i,
+                                                                          state_ram_data_out,
+                                                                          timestep_ram_data_out};
 
-      mux_timestep_ram_write_en_r   = timestep_ram_write_en_r;
-      mux_timestep_ram_write_addr_r = timestep_ram_write_addr_r;
-      mux_timestep_ram_data_in_r    = timestep_ram_data_in_r;
-    end
-  end
+  localparam OFFSET_NEURON_STATE = TIMESTEP_RAM_DATA_WIDTH;
+  localparam OFFSET_NEURON_ID    = TIMESTEP_RAM_DATA_WIDTH + NEURON_STATE_DATA_WIDTH + WEIGHT_SUM_DATA_WIDTH;
+  assign state_packetizer_input_valid = (state_q == CTRL_STATE_READOUT) ? stage1_output_valid : 1'b0;
+  assign state_packetizer_input_data  = (stage1_busy_q) ? {stage1_output_data_qq[OFFSET_NEURON_STATE +: NEURON_STATE_DATA_WIDTH],
+                                                           stage1_output_data_qq[OFFSET_NEURON_ID    +: HOT_NEURON_FIFO_DATA_WIDTH]} :
+                                        /*default*/       {state_ram_data_out, stage1_neuron_addr_q};
 
-  // Reset states RAM
-  always @(posedge clk_i) begin
-    if (rst_i & rst_mems_i) begin
-      if (rst_state_ram_write_addr_r < ((1 << NEURON_STATE_ADDR_WIDTH) - 1)) begin
-        rst_state_ram_write_en_r <= 1;
-        rst_states_done_r <= 0;
+  //============================================================================
+  // Inter-stage Skid Buffer 1
+  //============================================================================
 
-        if (rst_state_ram_write_en_r) begin // After writing started, begin incrementing
-          rst_state_ram_write_addr_r <= rst_state_ram_write_addr_r + 1;
-        end
-      end else begin
-        rst_states_done_r <= 1;
-        rst_state_ram_write_en_r <= 0;
-      end
-    end else begin
-      rst_states_done_r <= 0;
-      rst_state_ram_write_en_r <= 0;
-      rst_state_ram_write_addr_r <= {NEURON_STATE_ADDR_WIDTH{1'b0}};
-    end
-  end
+  logic inter_skid1_output_ready;
+  logic inter_skid1_output_valid;
+  logic [((HOT_NEURON_FIFO_DATA_WIDTH +
+           WEIGHT_SUM_DATA_WIDTH +
+           NEURON_STATE_DATA_WIDTH +
+           TIMESTEP_RAM_DATA_WIDTH)
+           -1):0] inter_skid1_output_data;
 
-  // Reset timesteps RAM
-  always @(posedge clk_i) begin
-    if (rst_i & rst_mems_i) begin
-      if (rst_timestep_ram_write_addr_r < ((1 << TIMESTEP_RAM_ADDR_WIDTH) - 1)) begin
-        rst_timestep_ram_write_en_r <= 1;
-        rst_timesteps_done_r <= 0;
+  Pipeline_Skid_Buffer #(
+    .WORD_WIDTH(HOT_NEURON_FIFO_DATA_WIDTH +
+                WEIGHT_SUM_DATA_WIDTH +
+                NEURON_STATE_DATA_WIDTH +
+                TIMESTEP_RAM_DATA_WIDTH),
+    .CIRCULAR_BUFFER(0)
+  ) u_inter_skid_buffer_1 (
+    .clock       (clk_i),
+    .clear       (rst_i),
+    .input_ready (inter_skid1_input_ready),
+    .input_valid ((state_q == CTRL_STATE_READOUT) ? 1'b0 : stage1_output_valid),
+    .input_data  (stage1_output_data),
+    .output_ready(inter_skid1_output_ready),
+    .output_valid(inter_skid1_output_valid),
+    .output_data (inter_skid1_output_data)
+  );
 
-        if (rst_timestep_ram_write_en_r) begin // After writing started, begin incrementing
-          rst_timestep_ram_write_addr_r <= rst_timestep_ram_write_addr_r + 1;
-        end
-      end else begin
-        rst_timesteps_done_r <= 1;
-        rst_timestep_ram_write_en_r <= 0;
-      end
-    end else begin
-      rst_timesteps_done_r <= 0;
-      rst_timestep_ram_write_en_r <= 0;
-      rst_timestep_ram_write_addr_r <= {TIMESTEP_RAM_ADDR_WIDTH{1'b0}};
-    end
-  end
+  logic [HOT_NEURON_FIFO_DATA_WIDTH-1:0] inter_skid1_output_data_neuron_id;
+  logic [NEURON_STATE_DATA_WIDTH-1:0]    inter_skid1_output_data_neuron_state;
+  logic [WEIGHT_SUM_DATA_WIDTH-1:0]      inter_skid1_output_data_weight_sum;
+  logic [TIMESTEP_RAM_DATA_WIDTH-1:0]    inter_skid1_output_data_timestep;
 
+  localparam OFFSET_TIMESTEP     = 0;
+  localparam OFFSET_WEIGHT_SUM   = TIMESTEP_RAM_DATA_WIDTH + NEURON_STATE_DATA_WIDTH;
+  
+  assign inter_skid1_output_data_timestep     = inter_skid1_output_data[OFFSET_TIMESTEP     +: TIMESTEP_RAM_DATA_WIDTH];
+  assign inter_skid1_output_data_neuron_state = inter_skid1_output_data[OFFSET_NEURON_STATE +: NEURON_STATE_DATA_WIDTH];
+  assign inter_skid1_output_data_weight_sum   = inter_skid1_output_data[OFFSET_WEIGHT_SUM   +: WEIGHT_SUM_DATA_WIDTH];
+  assign inter_skid1_output_data_neuron_id    = inter_skid1_output_data[OFFSET_NEURON_ID    +: HOT_NEURON_FIFO_DATA_WIDTH];
 
-  // ------------- NEURON -------------
+  //============================================================================
+  // Stage 2: Feed LIF Neuron
+  //============================================================================
 
-  lif_neuron #(
+  logic                               stage2_output_ready;
+  logic                               stage2_output_valid;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] stage2_output_data;
+
+  assign inter_skid1_output_ready    = inst_neuron_in_ready_d;
+  assign inst_neuron_in_valid_d      = (core_came_out_of_reset_i)                ? 1'b0 :
+                                       (timestep_i == last_reset_timestep_q - 1) ? inter_skid1_output_valid && ~addr_decoder_hit :
+                                       /*default*/                                 inter_skid1_output_valid;
+  assign inst_neuron_in_id_d         = inter_skid1_output_data_neuron_id;
+  assign inst_neuron_in_state_d      = inter_skid1_output_data_neuron_state;
+  assign inst_neuron_in_weight_sum_d = inter_skid1_output_data_weight_sum;
+  assign inst_neuron_in_timesteps_d  = (ctrl_pipeline_pending_past_d) ? forced_update_in_data.timestep - inter_skid1_output_data_timestep :
+                                       /*default*/                      timestep_i - inter_skid1_output_data_timestep;
+
+  assign weight_sum_ram_we_o    = inter_skid1_output_valid;
+  assign weight_sum_ram_waddr_o = inter_skid1_output_data_neuron_id;
+  assign weight_sum_ram_data_o  = '0;
+
+  assign inst_neuron_out_ready_d = stage2_output_ready;
+  assign stage2_output_valid     = inst_neuron_out_valid_d && inst_neuron_out_spike_d;
+  assign stage2_output_data      = inst_neuron_out_id_d;
+
+  assign state_ram_write_en_q      = (state_q == CTRL_STATE_RESET) ? ram_addr_gen_valid : inst_neuron_out_valid_d;
+  assign state_ram_write_addr_q    = (state_q == CTRL_STATE_RESET) ? ram_addr_gen_addr  : inst_neuron_out_id_d;
+  assign state_ram_data_in_q       = (state_q == CTRL_STATE_RESET) ? '0                 : inst_neuron_out_state_d;
+  assign timestep_ram_write_en_q   = (state_q == CTRL_STATE_RESET) ? ram_addr_gen_valid : inst_neuron_out_valid_d;
+  assign timestep_ram_write_addr_q = (state_q == CTRL_STATE_RESET) ? ram_addr_gen_addr  : inst_neuron_out_id_d;
+  assign timestep_ram_data_in_q    = (state_q == CTRL_STATE_RESET) ? '0                 : timestep_i;
+
+  //============================================================================
+  // Inter-stage Skid Buffer 2
+  //============================================================================
+
+  logic inter_skid2_output_ready;
+  logic inter_skid2_output_valid;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] inter_skid2_output_data;
+
+  Pipeline_Skid_Buffer #(
+    .WORD_WIDTH     (NEURON_STATE_ADDR_WIDTH),
+    .CIRCULAR_BUFFER(0)
+  ) u_inter_skid_buffer_2 (
+    .clock       (clk_i),
+    .clear       (rst_i),
+    .input_ready (stage2_output_ready),
+    .input_valid (stage2_output_valid),
+    .input_data  (stage2_output_data),
+    .output_ready(inter_skid2_output_ready),
+    .output_valid(inter_skid2_output_valid),
+    .output_data (inter_skid2_output_data)
+  );
+
+  //============================================================================
+  // Module Instantiations
+  //============================================================================
+
+  //============================================================================
+  // Neuron Instantiation
+  //============================================================================
+
+  LifNeuron #(
       .EMIT_SPIKES(EMIT_SPIKES),
-      .LEAK_STATES(LEAK_STATES),
-      .NEURON_STATE_ADDR_WIDTH(NEURON_STATE_ADDR_WIDTH),
-      .NEURON_STATE_DATA_WIDTH(NEURON_STATE_DATA_WIDTH),
-      .NEURON_STATE_DECIMALS  (NEURON_STATE_DECIMALS),
+      .LEAK_STATES(LEAK_STATES)
+  ) u_lif_neuron (
+      .clk_i (clk_i),
+      .rst_i (rst_i),
+      .done_o(inst_neuron_done),
 
-      .TIMESTEP_COUNTER_DATA_WIDTH(TIMESTEP_RAM_DATA_WIDTH),
+      .in_ready_o     (inst_neuron_in_ready_d),
+      .in_valid_i     (inst_neuron_in_valid_d),
+      .in_id_i        (inst_neuron_in_id_d),
+      .in_state_i     (inst_neuron_in_state_d),
+      .in_weight_sum_i(inst_neuron_in_weight_sum_d),
+      .in_timesteps_i (inst_neuron_in_timesteps_d),
 
-      .WEIGHT_SUM_DATA_WIDTH(WEIGHT_SUM_DATA_WIDTH),
-      .WEIGHT_SUM_DECIMALS  (WEIGHT_SUM_DECIMALS),
+      .out_ready_i(inst_neuron_out_ready_d),
+      .out_valid_o(inst_neuron_out_valid_d),
+      .out_id_o   (inst_neuron_out_id_d),
+      .out_state_o(inst_neuron_out_state_d),
+      .out_spike_o(inst_neuron_out_spike_d),
 
-      .TAU_MEM_INV_DATA_WIDTH(TAU_MEM_INV_DATA_WIDTH),
-      .TAU_MEM_INV_DECIMALS(TAU_MEM_INV_DECIMALS),
-      .TAU_MEM_INV(TAU_MEM_INV),
+      .ram_leak_write_en_i(leak_lut_we_i),
+      .ram_leak_addr_i    (leak_lut_addr_i),
+      .ram_leak_data_i    (leak_lut_data_i),
 
-      .RAM_LEAK_ADDR_WIDTH(RAM_LEAK_ADDR_WIDTH),
-      .RAM_LEAK_DATA_WIDTH(RAM_LEAK_DATA_WIDTH),
-      .RAM_LEAK_DECIMALS(RAM_LEAK_DECIMALS),
-      .RAM_LEAK_INIT_MEM_FILE(RAM_LEAK_INIT_MEM_FILE)
-  ) inst_neuron_lif (
-      .clk_i(clk_i),
-      .rst_i(rst_i),
-      .idle_o(inst_neuron_idle_w),
-
-      .input_valid_i(inst_neuron_valid_in_r),
-      .neuron_id_i(inst_neuron_id_in_r),
-      .neuron_state_i(inst_neuron_state_in_r),
-      .weight_sum_i(inst_neuron_weight_sum_in_r),
-      .timesteps_since_last_activation_i(inst_neuron_timesteps_in_r),
-
-      .output_valid_o(inst_neuron_output_valid_w),
-      .neuron_id_o(inst_neuron_neuron_id_out_w),
-      .neuron_state_o(inst_neuron_neuron_state_out_w),
-      .spike_out_o(inst_neuron_spike_out_w),
-
-      .ram_leak_write_en_i(neuron_leak_ram_write_en_i),
-      .ram_leak_addr_i(neuron_leak_ram_addr_i),
-      .ram_leak_data_i(neuron_leak_ram_data_i),
-
-      .tau_mem_inv(neuron_tau_mem_inv)
+      .spike_threshold_i(threshold_reg_data_out),
+      .tau_mem_inv_i    (tau_mem_inv_reg_data_out)
   );
 
+  //============================================================================
+  // Memory Instantiations
+  //============================================================================
 
-  // ------------- MEMORIES -------------
-
-  DUAL_PORT_RAM #(
-      .DATA_WIDTH(NEURON_STATE_DATA_WIDTH),
-      .ADDR_WIDTH(NEURON_STATE_ADDR_WIDTH),
+  DualPortRamSimple #(
+      .VENDOR       (VENDOR),
+      .DATA_WIDTH   (NEURON_STATE_DATA_WIDTH),
+      .ADDR_WIDTH   (NEURON_STATE_ADDR_WIDTH),
       .INIT_MEM_FILE(NEURON_STATE_INIT_FILE)
-  ) state_RAM (
-      .clk_i(clk_i),
-
-      .read_en_i(state_ram_read_en_r),
-      .read_addr_i(state_ram_read_addr_r),
-      .data_out(state_ram_data_out_w),
-
-      .write_en_i(mux_state_ram_write_en_r),
-      .write_addr_i(mux_state_ram_write_addr_r),
-      .data_in(mux_state_ram_data_in_r)
+  ) u_state_ram (
+      .clk_i       (clk_i),
+      .read_en_i   (state_ram_read_en_q),
+      .read_addr_i (state_ram_read_addr_q),
+      .data_o      (state_ram_data_out),
+      .write_en_i  (state_ram_write_en_q),
+      .write_addr_i(state_ram_write_addr_q),
+      .data_i      (state_ram_data_in_q),
+      .sleep_i     (state_ram_sleep),
+      .awake_o     (state_ram_awake)
   );
 
-
-  DUAL_PORT_RAM #(
-      .DATA_WIDTH(TIMESTEP_RAM_DATA_WIDTH),
-      .ADDR_WIDTH(TIMESTEP_RAM_ADDR_WIDTH),
+  DualPortRamSimple #(
+      .VENDOR       (VENDOR),
+      .DATA_WIDTH   (TIMESTEP_RAM_DATA_WIDTH),
+      .ADDR_WIDTH   (TIMESTEP_RAM_ADDR_WIDTH),
       .INIT_MEM_FILE(TIMESTEP_RAM_INIT_FILE)
-  ) timestep_RAM (
-      .clk_i(clk_i),
-
-      .read_en_i(timestep_ram_read_en_r),
-      .read_addr_i(timestep_ram_read_addr_r),
-      .data_out(timestep_ram_data_out_w),
-
-      .write_en_i(mux_timestep_ram_write_en_r),
-      .write_addr_i(mux_timestep_ram_write_addr_r),
-      .data_in(mux_timestep_ram_data_in_r)
+  ) u_timestep_ram (
+      .clk_i       (clk_i),
+      .read_en_i   (timestep_ram_read_en_q),
+      .read_addr_i (timestep_ram_read_addr_q),
+      .data_o      (timestep_ram_data_out),
+      .write_en_i  (timestep_ram_write_en_q),
+      .write_addr_i(timestep_ram_write_addr_q),
+      .data_i      (timestep_ram_data_in_q),
+      .sleep_i     (timestep_ram_sleep),
+      .awake_o     (timestep_ram_awake)
   );
+
+  Register #(
+      .WORD_WIDTH(SPIKE_THRESHOLD_WIDTH_G),
+      .RESET_VALUE('1)
+  ) u_neuron_threshold_register (
+      .clock       (clk_i),
+      .clock_enable(spike_threshold_reg_ce_i),
+      .clear       (/* ignored */),
+      .data_in     (spike_threshold_reg_data_i),
+      .data_out    (threshold_reg_data_out)
+  );
+
+  Register #(
+      .WORD_WIDTH(TAU_MEM_INV_WIDTH),
+      .RESET_VALUE('1)
+  ) u_neuron_tau_mem_inv_register (
+      .clock       (clk_i),
+      .clock_enable(tau_mem_inv_reg_ce_i),
+      .clear       (/* ignored */),
+      .data_in     (tau_mem_inv_reg_data_i),
+      .data_out    (tau_mem_inv_reg_data_out)
+  );
+
+  //============================================================================
+  // State Readout Module Instantiations
+  //============================================================================
+
+  AddressGenerator #(
+    .ADDR_WIDTH (NEURON_STATE_ADDR_WIDTH)
+  ) u_ram_addr_gen (
+    .clk_i       (clk_i),
+    .rst_i       (rst_i),
+    .enable_i    (ram_addr_gen_enable),
+    .start_i     (ram_addr_gen_start),
+    .start_addr_i(ram_addr_gen_start_addr),
+    .end_addr_i  (ram_addr_gen_end_addr),
+    .valid_o     (ram_addr_gen_valid),
+    .addr_o      (ram_addr_gen_addr),
+    .idle_o      (ram_addr_gen_idle)
+  );
+
+  NeuronWrapperStatePacketizer #(
+    .SOURCE_CORE_ID_X(CORE_ID_X),
+    .SOURCE_CORE_ID_Y(CORE_ID_Y)
+  ) u_state_packetizer (
+    .clk_i                   (clk_i),
+    .rst_i                   (rst_i),
+    .done_o                  (state_packetizer_done),
+    .state_input_ready_o     (state_packetizer_input_ready),
+    .state_input_valid_i     (state_packetizer_input_valid),
+    .state_input_data_i      (state_packetizer_input_data),
+    .state_packet_out_ready_i(state_packetizer_output_ready),
+    .state_packet_out_valid_o(state_packetizer_output_valid),
+    .state_packet_out_data_o (state_packetizer_output_data)
+  );
+
+  //============================================================================
+  // State Reset Module Instantiations
+  //============================================================================
+
+  Address_Decoder_Behavioural #(
+    .ADDR_WIDTH (NEURON_STATE_ADDR_WIDTH)
+  ) u_addr_decoder (
+    .base_addr (addr_decoder_base_q),
+    .bound_addr(addr_decoder_bound_q),
+    .addr      (inter_skid1_output_data_neuron_id),
+    .hit       (addr_decoder_hit)
+  );
+
+  //============================================================================
+  // FSMs
+  //============================================================================
+  
+  //============================================================================
+  // MASTER FSM
+  //============================================================================
+
+  always_ff @(posedge clk_i) begin
+    if (rst_i) begin
+      state_q               <= IDLE;
+      ctrl_cmd_started_q    <= 1'b0;
+      last_reset_timestep_q <= '0;
+      addr_decoder_base_q   <= '0;    
+      addr_decoder_bound_q  <= '0;    
+    end else begin
+      state_q               <= state_d;
+      ctrl_cmd_started_q    <= ctrl_cmd_started_d;
+      last_reset_timestep_q <= last_reset_timestep_d;
+      addr_decoder_base_q   <= addr_decoder_base_d;
+      addr_decoder_bound_q  <= addr_decoder_bound_d;
+    end
+  end
+
+  always_comb begin
+    state_d                  = state_q;
+    ram_addr_gen_enable      = 1'b0;
+    ram_addr_gen_start       = 1'b0;
+    ram_addr_gen_start_addr  = '0;
+    ram_addr_gen_end_addr    = '0;
+    forced_update_in_ready_o = 1'b0;
+    state_readout_in_ready_o = 1'b0;
+    state_reset_in_ready_o   = 1'b0;
+    last_reset_timestep_d    = last_reset_timestep_q;
+    addr_decoder_base_d      = addr_decoder_base_q;
+    addr_decoder_bound_d     = addr_decoder_bound_q;
+    ctrl_cmd_started_d       = ctrl_cmd_started_q;
+
+    case (state_q)
+      IDLE: begin
+        if (init_i) begin
+          state_d = INITIALIZING;
+        end else if (enable_i && all_memories_awake) begin
+          if (ctrl_pipeline_pending_past_d) begin
+            state_d = CTRL_FORCED_UPDATE;
+          end else if (!data_pipeline_done_d) begin
+            state_d = PROCESSING;
+          end else if (ctrl_pipeline_pending_now_d) begin
+            state_d = CTRL_FORCED_UPDATE;
+          end
+        end
+      end
+
+      PROCESSING: begin
+        if (data_pipeline_done_d) begin
+          state_d = IDLE;
+        end
+      end
+
+      CTRL_FORCED_UPDATE: begin
+        ram_addr_gen_enable = 1'b1;
+        if (!ctrl_cmd_started_q &&
+            forced_update_in_valid_i && forced_update_in_data.timestep <= timestep_i) begin
+          ram_addr_gen_start       = 1'b1;
+          ram_addr_gen_start_addr  = forced_update_in_data.start_addr;
+          ram_addr_gen_end_addr    = forced_update_in_data.end_addr;
+          forced_update_in_ready_o = 1'b1;
+          ctrl_cmd_started_d       = 1'b1;
+        end else if (ram_addr_gen_idle && data_pipeline_done_d) begin
+          ram_addr_gen_enable      = 1'b0;
+          state_d                  = CTRL_STATE_READOUT;
+          ctrl_cmd_started_d       = 1'b0;
+        end
+      end
+
+      CTRL_STATE_READOUT: begin
+        ram_addr_gen_enable = 1'b1;
+        if (!ctrl_cmd_started_q &&
+            state_readout_in_valid_i && state_readout_in_data.timestep <= timestep_i) begin
+          ram_addr_gen_start       = 1'b1;
+          ram_addr_gen_start_addr  = state_readout_in_data.start_addr;
+          ram_addr_gen_end_addr    = state_readout_in_data.end_addr;
+          state_readout_in_ready_o = 1'b1;
+          ctrl_cmd_started_d       = 1'b1;
+        end else if (!input_skid_output_ready) begin
+          ram_addr_gen_enable = 1'b0;
+        end else if (ram_addr_gen_idle && data_pipeline_done_d && state_packetizer_done) begin
+          ram_addr_gen_enable      = 1'b0;
+          state_d                  = CTRL_STATE_RESET;
+          ctrl_cmd_started_d       = 1'b0;
+        end
+      end
+
+      CTRL_STATE_RESET: begin
+        ram_addr_gen_enable = 1'b1;
+        if (!ctrl_cmd_started_q &&
+            state_reset_in_valid_i && state_reset_in_data.timestep <= timestep_i) begin
+          ram_addr_gen_start      = 1'b1;
+          ram_addr_gen_start_addr = state_reset_in_data.start_addr;
+          ram_addr_gen_end_addr   = state_reset_in_data.end_addr;
+          state_reset_in_ready_o  = 1'b1;
+          ctrl_cmd_started_d      = 1'b1;
+          last_reset_timestep_d   = state_reset_in_data.timestep;
+          addr_decoder_base_d     = state_reset_in_data.start_addr;
+          addr_decoder_bound_d    = state_reset_in_data.end_addr;
+        end else if (ram_addr_gen_idle) begin
+          ram_addr_gen_enable    = 1'b0;
+          state_d                = IDLE;
+          ctrl_cmd_started_d     = 1'b0;
+        end
+      end
+
+      INITIALIZING: begin
+        if (!init_i) begin
+          state_d = IDLE;
+        end
+      end
+
+      default: begin
+        state_d = IDLE;
+      end
+    endcase
+  end
+
+  //============================================================================
+  // MEMORY SLEEP FSM
+  //============================================================================
+
+  always_ff @(posedge clk_i) begin
+    if (rst_i) begin
+      sleep_counter_q <= '0;
+      sleep_state_q <= AWAKE;
+    end else begin
+      sleep_state_q <= sleep_state_d;
+      sleep_counter_q <= sleep_counter_d;
+    end
+  end
+
+  always_comb begin
+    sleep_state_d = sleep_state_q;
+    sleep_counter_d = sleep_counter_q;
+    state_ram_sleep = 1'b0;
+    timestep_ram_sleep = 1'b0;
+
+    if (state_q == INITIALIZING) begin
+      sleep_counter_d = '0;
+      sleep_state_d = AWAKE;
+    end else begin
+      case (sleep_state_q)
+        AWAKE: begin
+          if (pipelines_done_d) begin
+            sleep_counter_d = CYCLES_RAISE_SLEEP;
+            sleep_state_d = COUNTING_TO_SLEEP;
+          end
+        end
+        COUNTING_TO_SLEEP: begin
+          if (!pipelines_done_d) begin
+            sleep_counter_d = '0;
+            sleep_state_d = AWAKE;
+          end else if (sleep_counter_q == 0) begin
+            state_ram_sleep = 1'b1;
+            timestep_ram_sleep = 1'b1;
+            sleep_state_d = SLEEPING;
+          end else begin
+            sleep_counter_d = sleep_counter_q - 1;
+          end
+        end
+        SLEEPING: begin
+          state_ram_sleep = 1'b1;
+          timestep_ram_sleep = 1'b1;
+          if (!pipelines_done_d) begin
+            sleep_counter_d = '0;
+            sleep_state_d = AWAKE;
+          end
+        end
+        default: begin
+          sleep_counter_d = '0;
+          sleep_state_d = AWAKE;
+        end
+      endcase
+    end
+  end
+
+  //============================================================================
+  // Signal Assignments
+  //============================================================================
+  
+  assign all_memories_awake = state_ram_awake && timestep_ram_awake;
+  
+  assign data_pipeline_done_d         = ~hot_neuron_in_valid_i &&
+                                        ~input_skid_output_valid &&
+                                        ~stage1_output_valid &&
+                                        ~inter_skid1_output_valid &&
+                                        ~stage2_output_valid &&
+                                        ~inter_skid2_output_valid &&
+                                        inst_neuron_done;
+  assign ctrl_pipeline_pending_past_d = ((state_reset_in_data.timestep   < timestep_i) && state_reset_in_valid_i)   ||
+                                        ((forced_update_in_data.timestep < timestep_i) && forced_update_in_valid_i) ||
+                                        ((state_readout_in_data.timestep < timestep_i) && state_readout_in_valid_i);
+
+  assign ctrl_pipeline_pending_now_d  = (state_reset_in_data.timestep   == timestep_i && state_reset_in_valid_i)   ||
+                                        (forced_update_in_data.timestep == timestep_i && forced_update_in_valid_i) ||
+                                        (state_readout_in_data.timestep == timestep_i && state_readout_in_valid_i);
+  assign ctrl_pipeline_pending_d      = ctrl_pipeline_pending_now_d || ctrl_pipeline_pending_past_d;
+  assign pipelines_done_d             = (state_q == IDLE) &&
+                                        data_pipeline_done_d &&
+                                        ~ctrl_pipeline_pending_d;
+  assign done_o                       = pipelines_done_d ||
+                                        (state_q == INITIALIZING);
+
+  assign hot_neuron_in_ready_o  = (state_q == PROCESSING)         ? input_skid_input_ready : 1'b0;
+  assign input_skid_input_valid = (state_q == CTRL_FORCED_UPDATE) ? ram_addr_gen_valid    :
+                                  (state_q == CTRL_STATE_READOUT) ? ram_addr_gen_valid    :
+                                  (state_q == PROCESSING)         ? hot_neuron_in_valid_i :
+                                  /*default*/                       1'b0;
+  assign input_skid_input_data  = (state_q == CTRL_FORCED_UPDATE) ? ram_addr_gen_addr :
+                                  (state_q == CTRL_STATE_READOUT) ? ram_addr_gen_addr :
+                                  /*default*/                       hot_neuron_in_data_i;
+  assign inter_skid2_output_ready   = (state_q == PROCESSING) && spiking_neuron_out_ready_i;
+  assign spiking_neuron_out_valid_o = (state_q == PROCESSING) && inter_skid2_output_valid;
+  assign spiking_neuron_out_data_o  = inter_skid2_output_data;
+  assign state_packetizer_output_ready = state_readout_out_ready_i;
+  assign state_readout_out_valid_o     = state_packetizer_output_valid;
+  assign state_readout_out_data_o      = state_packetizer_output_data;
 
 endmodule

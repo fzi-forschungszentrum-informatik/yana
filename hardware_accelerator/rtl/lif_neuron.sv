@@ -2,72 +2,58 @@
 
 `include "global_params.vh"
 
-
-module lif_neuron #(
-    parameter EMIT_SPIKES = 1,  // If 0, no spikes are created
-    parameter LEAK_STATES = 1,  // If 0, no leak is applied to the neuron state
-
-    parameter NEURON_STATE_ADDR_WIDTH = 10,
-    parameter NEURON_STATE_DATA_WIDTH = 24,
-    parameter NEURON_STATE_DECIMALS   = 16,
-
-    parameter TIMESTEP_COUNTER_DATA_WIDTH = 8,
-
-    parameter WEIGHT_SUM_DATA_WIDTH = 15,
-    parameter WEIGHT_SUM_DECIMALS   = 8,
-
-    parameter TAU_MEM_INV_DATA_WIDTH = TAU_MEM_INV_DATA_WIDTH_G,
-    parameter TAU_MEM_INV_DECIMALS   = TAU_MEM_INV_DECIMALS_G,
-    parameter [TAU_MEM_INV_DATA_WIDTH-1:0] TAU_MEM_INV = TAU_MEM_INV_G,
-
-    parameter SPIKE_THRESHOLD_DECIMALS = SPIKE_THRESHOLD_DECIMALS_G,
-    parameter integer SPIKE_THRESHOLD  = SPIKE_THRESHOLD_G,
-
+module LifNeuron #(
+    parameter EMIT_SPIKES = 1,
+    parameter LEAK_STATES = 1,
+    parameter NEURON_STATE_ADDR_WIDTH  = CORE_NEURON_ID_WIDTH_G,
+    parameter NEURON_STATE_DATA_WIDTH  = NEURON_STATE_WIDTH_G,
+    parameter NEURON_STATE_FRACTIONALS = NEURON_STATE_WIDTH_FRACTIONALS_G,
+    parameter TIMESTEP_COUNTER_DATA_WIDTH = TIMESTEP_WIDTH_G,
+    parameter WEIGHT_SUM_DATA_WIDTH  = CORE_WEIGHT_SUM_RAM_DATA_WIDTH_G - 1,
+    parameter WEIGHT_SUM_FRACTIONALS = WEIGHT_WIDTH_FRACTIONALS_G,
+    parameter TAU_MEM_INV_DATA_WIDTH                   = TAU_MEM_INV_WIDTH_G,
+    parameter TAU_MEM_INV_FRACTIONALS                  = TAU_MEM_INV_WIDTH_FRACTIONALS_G,
+    parameter SPIKE_THRESHOLD_WIDTH    = SPIKE_THRESHOLD_WIDTH_G,
+    parameter SPIKE_THRESHOLD_DECIMALS = SPIKE_THRESHOLD_WIDTH_FRACTIONALS_G,
     parameter RESET_VALUE = RESET_VALUE_G,
-
     parameter RAM_LEAK_ADDR_WIDTH    = RAM_LEAK_ADDR_WIDTH_G,
     parameter RAM_LEAK_DATA_WIDTH    = RAM_LEAK_DATA_WIDTH_G,
-    parameter RAM_LEAK_DECIMALS      = RAM_LEAK_DECIMALS_G,
-    parameter RAM_LEAK_INIT_MEM_FILE = RAM_LEAK_INIT_MEM_FILE_G,
-
-    parameter STATE_LOW_CLAMP_MODE = "MIN",   //"MIN", "ZERO"
-    parameter STATE_ROUND_MODE     = "FLOOR", //"CONVERGENT", "FLOOR"
-
-    parameter MULT_USE_DSP = "auto"
+    parameter RAM_LEAK_FRACTIONALS   = RAM_LEAK_WIDTH_FRACTIONALS_G,
+    parameter RAM_LEAK_INIT_MEM_FILE = RAM_LEAK_INIT_FILE_G,
+    parameter STATE_LOW_CLAMP_MODE = "MIN",
+    parameter STATE_ROUND_MODE     = "FLOOR"
 ) (
-    input  clk_i,
-    input  rst_i,
-    output idle_o,
+    input  logic clk_i,
+    input  logic rst_i,
+    output logic done_o,
 
-    input                                       input_valid_i,
-    input [NEURON_STATE_ADDR_WIDTH -1 : 0]      neuron_id_i,
-    input [NEURON_STATE_DATA_WIDTH -1 : 0]      neuron_state_i, // represents u(t)
-    input signed [WEIGHT_SUM_DATA_WIDTH -1 : 0] weight_sum_i,   // represents I(t)
-    input [TIMESTEP_COUNTER_DATA_WIDTH -1 : 0]  timesteps_since_last_activation_i,  // represents n
+    output logic                                       in_ready_o,
+    input  logic                                       in_valid_i,
+    input  logic [NEURON_STATE_ADDR_WIDTH -1 : 0]      in_id_i,
+    input  logic [NEURON_STATE_DATA_WIDTH -1 : 0]      in_state_i,
+    input  logic signed [WEIGHT_SUM_DATA_WIDTH -1 : 0] in_weight_sum_i,
+    input  logic [TIMESTEP_COUNTER_DATA_WIDTH -1 : 0]  in_timesteps_i,
 
-    output reg                                  output_valid_o,
-    output reg [NEURON_STATE_ADDR_WIDTH -1 : 0] neuron_id_o,
-    output reg [NEURON_STATE_DATA_WIDTH -1 : 0] neuron_state_o, // represents u(t+n)
-    output reg                                  spike_out_o,    // represents u(t+n) > SPIKE_THRESHOLD
+    input  logic                                  out_ready_i,
+    output logic                                  out_valid_o,
+    output logic [NEURON_STATE_ADDR_WIDTH -1 : 0] out_id_o,
+    output logic [NEURON_STATE_DATA_WIDTH -1 : 0] out_state_o,
+    output logic                                  out_spike_o,
 
-    input                                       ram_leak_write_en_i,
-    input [RAM_LEAK_ADDR_WIDTH - 1 : 0]         ram_leak_addr_i,
-    input [RAM_LEAK_DATA_WIDTH - 1 : 0]         ram_leak_data_i,
+    input logic                               ram_leak_write_en_i,
+    input logic [RAM_LEAK_ADDR_WIDTH - 1 : 0] ram_leak_addr_i,
+    input logic [RAM_LEAK_DATA_WIDTH - 1 : 0] ram_leak_data_i,
 
-    input [TAU_MEM_INV_DATA_WIDTH-1:0]          tau_mem_inv
+    input logic [SPIKE_THRESHOLD_WIDTH-1:0]  spike_threshold_i,
+    input logic [TAU_MEM_INV_DATA_WIDTH-1:0] tau_mem_inv_i
 );
-  // Naming Conventions
-  // - state_u means the voltage part of the state
 
-  // Define voltage part of neuron state. For LIF this equals the whole state but for other neurons it can differ
   localparam NEURON_STATE_U_WIDTH    = NEURON_STATE_DATA_WIDTH;
-  localparam NEURON_STATE_U_DECIMALS = NEURON_STATE_DECIMALS;
-
-  // Parameter calculations to handle fixed point numbers with different amounts of decimals
+  localparam NEURON_STATE_U_DECIMALS = NEURON_STATE_FRACTIONALS;
   localparam STATE_U_LEAKED_WIDTH    = NEURON_STATE_U_WIDTH + RAM_LEAK_DATA_WIDTH;
-  localparam STATE_U_LEAKED_DECIMALS = NEURON_STATE_U_DECIMALS + RAM_LEAK_DECIMALS;
+  localparam STATE_U_LEAKED_DECIMALS = NEURON_STATE_U_DECIMALS + RAM_LEAK_FRACTIONALS;
   localparam INPUT_LEAKED_WIDTH      = WEIGHT_SUM_DATA_WIDTH + TAU_MEM_INV_DATA_WIDTH;
-  localparam INPUT_LEAKED_DECIMALS   = WEIGHT_SUM_DECIMALS + TAU_MEM_INV_DECIMALS;
+  localparam INPUT_LEAKED_DECIMALS   = WEIGHT_SUM_FRACTIONALS + TAU_MEM_INV_FRACTIONALS;
 
   localparam STATE_U_SUM_WIDTH = fixed_addition_result_width(
       STATE_U_LEAKED_WIDTH, STATE_U_LEAKED_DECIMALS, INPUT_LEAKED_WIDTH, INPUT_LEAKED_DECIMALS
@@ -75,173 +61,452 @@ module lif_neuron #(
   localparam STATE_U_SUM_DECIMALS = fixed_addition_result_decimals(
       STATE_U_LEAKED_WIDTH, STATE_U_LEAKED_DECIMALS, INPUT_LEAKED_WIDTH, INPUT_LEAKED_DECIMALS
   );
-  localparam STATE_U_SUM_ROUNDED_WIDTH = STATE_U_SUM_WIDTH - (STATE_U_SUM_DECIMALS - NEURON_STATE_U_DECIMALS); // Size is NEURON_STATE_U_WIDTH + 1 to catch overflows
+  localparam STATE_U_SUM_ROUNDED_WIDTH = STATE_U_SUM_WIDTH - (STATE_U_SUM_DECIMALS - NEURON_STATE_U_DECIMALS);
 
   localparam SPIKE_THRESHOLD_SHIFT_DECIMALS = abs_diff(SPIKE_THRESHOLD_DECIMALS, STATE_U_SUM_DECIMALS);
+  localparam SPIKE_THR_U_CMP_W              = STATE_U_SUM_WIDTH - SPIKE_THRESHOLD_SHIFT_DECIMALS;
 
   localparam signed NEURON_STATE_U_MIN = (STATE_LOW_CLAMP_MODE == "MIN") ? {1'b1, {(NEURON_STATE_U_WIDTH-1){1'b0}}} :  {(NEURON_STATE_U_WIDTH){1'b0}};
   localparam signed NEURON_STATE_U_MAX = {1'b0, {(NEURON_STATE_U_WIDTH - 1) {1'b1}}};
-
 
   initial begin
     if (STATE_U_SUM_DECIMALS < SPIKE_THRESHOLD_DECIMALS)
       $error(
           "SPIKE_THRESHOLD_DECIMALS (%0d) has to be > STATE_U_SUM_DECIMALS (%0d)", SPIKE_THRESHOLD_DECIMALS, STATE_U_SUM_DECIMALS
       );
-
-    if (SPIKE_THRESHOLD / (2.0 ** SPIKE_THRESHOLD_DECIMALS) > NEURON_STATE_U_MAX / (2.0 ** NEURON_STATE_U_DECIMALS))
-      $error(
-          "SPIKE_THRESHOLD (%f) has to be <= NEURON_STATE_U_MAX (%f)",
-          SPIKE_THRESHOLD / (2.0 ** SPIKE_THRESHOLD_DECIMALS),
-          NEURON_STATE_U_MAX / (2.0 ** NEURON_STATE_U_DECIMALS)
-      );
   end
 
+  //============================================================================
+  // FSM State Declarations
+  //============================================================================
 
-  // Unpack input state and pack output state (extract/combine all state signals from/to a single state vector).
-  // LIF only has a single state signal (voltage), but for other neurons it can differ
-  wire signed [NEURON_STATE_U_WIDTH - 1 : 0] neuron_state_u_in;
-  reg  signed [NEURON_STATE_U_WIDTH - 1 : 0] neuron_state_u_out;
-  assign neuron_state_u_in = $signed(neuron_state_i);
-  assign neuron_state_o    = neuron_state_u_out;
+  typedef enum logic [2:0] {
+    IDLE,
+    PROCESSING
+  } master_state_e;
 
-  // LUTRAM registers
-  wire [RAM_LEAK_DATA_WIDTH - 1 : 0] leak_factor;
+  master_state_e state_q, state_d;
 
-  // Pipeline registers
-  reg [1:0] pipeline_exec;
-  reg [NEURON_STATE_ADDR_WIDTH - 1 : 0] neuron_id_q, neuron_id_q2;
+  //============================================================================
+  // Signal Declarations
+  //============================================================================
+  
+  logic pipeline_done_d;
 
-  (* use_dsp=MULT_USE_DSP *) reg signed [STATE_U_LEAKED_WIDTH - 1 : 0] state_u_leaked;
-  (* use_dsp=MULT_USE_DSP *) reg signed [INPUT_LEAKED_WIDTH - 1 : 0]   input_leaked;
+  logic input_skid_input_ready;
+  logic input_skid_input_valid;
+  logic [((NEURON_STATE_ADDR_WIDTH +
+          NEURON_STATE_DATA_WIDTH +
+          WEIGHT_SUM_DATA_WIDTH +
+          TIMESTEP_COUNTER_DATA_WIDTH +
+          TAU_MEM_INV_DATA_WIDTH +
+          SPIKE_THRESHOLD_WIDTH)
+          -1):0] input_skid_input_data;
+  logic input_skid_output_ready;
+  logic input_skid_output_valid;
+  logic [((NEURON_STATE_ADDR_WIDTH +
+          NEURON_STATE_DATA_WIDTH +
+          WEIGHT_SUM_DATA_WIDTH +
+          TIMESTEP_COUNTER_DATA_WIDTH + 
+          TAU_MEM_INV_DATA_WIDTH +
+          SPIKE_THRESHOLD_WIDTH)
+          -1):0] input_skid_output_data;
 
-  reg  signed [STATE_U_SUM_WIDTH - 1 : 0]         state_u_new;
-  wire signed [STATE_U_SUM_ROUNDED_WIDTH - 1 : 0] state_u_new_rounded; // Rounded state_u matching our Norse implementation
+  logic [TIMESTEP_COUNTER_DATA_WIDTH-1:0]  input_skid_output_timesteps;
+  logic signed [WEIGHT_SUM_DATA_WIDTH-1:0] input_skid_output_weight_sum;
+  logic [NEURON_STATE_DATA_WIDTH-1:0]      input_skid_output_neuron_state;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0]      input_skid_output_neuron_id;
+  logic [TAU_MEM_INV_DATA_WIDTH-1:0]       input_skid_output_tau_mem_inv;
+  logic [SPIKE_THRESHOLD_WIDTH-1:0]        input_skid_output_spike_threshold;
 
-  // Module is idle if pipeline is not executed and in and outport are not busy
-  assign idle_o = ~(input_valid_i | (|pipeline_exec) | output_valid_o);
+  logic stage1_output_ready;
+  logic stage1_output_valid;
+  logic [((NEURON_STATE_ADDR_WIDTH +
+          INPUT_LEAKED_WIDTH +
+          STATE_U_LEAKED_WIDTH +
+          SPIKE_THRESHOLD_WIDTH)
+          -1):0] stage1_output_data;
+
+  logic signed [STATE_U_LEAKED_WIDTH - 1 : 0] stage1_leaked_state;
+  logic signed [INPUT_LEAKED_WIDTH - 1 : 0]   stage1_leaked_input;
+
+  logic inter_skid1_output_ready;
+  logic inter_skid1_output_valid;
+  logic [((NEURON_STATE_ADDR_WIDTH +
+          INPUT_LEAKED_WIDTH +
+          STATE_U_LEAKED_WIDTH +
+          SPIKE_THRESHOLD_WIDTH)
+          -1):0] inter_skid1_output_data;
+
+  logic signed [STATE_U_LEAKED_WIDTH - 1 : 0] inter_skid1_output_leaked_state;
+  logic signed [INPUT_LEAKED_WIDTH - 1 : 0]   inter_skid1_output_leaked_input;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0]         inter_skid1_output_neuron_id;
+  logic [SPIKE_THRESHOLD_WIDTH-1:0]           inter_skid1_output_spike_threshold;
+
+  logic stage2_output_ready;
+  logic stage2_output_valid;
+  logic [NEURON_STATE_ADDR_WIDTH +
+         STATE_U_SUM_WIDTH +
+         SPIKE_THRESHOLD_WIDTH
+         -1: 0] stage2_output_data;
+
+  logic signed [STATE_U_SUM_WIDTH - 1 : 0] stage2_state_u_new;
+
+  logic inter_skid2_output_ready;
+  logic inter_skid2_output_valid;
+  logic [((NEURON_STATE_ADDR_WIDTH +
+          STATE_U_SUM_WIDTH +
+          SPIKE_THRESHOLD_WIDTH)
+          -1):0] inter_skid2_output_data;
+  
+  logic signed [STATE_U_SUM_WIDTH - 1 : 0] inter_skid2_output_state_u_new;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0]      inter_skid2_output_neuron_id;
+  logic [SPIKE_THRESHOLD_WIDTH-1:0]        inter_skid2_output_spike_threshold;
+
+  logic stage3_output_ready;
+  logic stage3_output_valid;
+  logic [(NEURON_STATE_ADDR_WIDTH +
+          1                       +
+          NEURON_STATE_DATA_WIDTH
+         -1): 0] stage3_output_data;
+
+  logic                                  stage3_spike_out;
+  logic [NEURON_STATE_DATA_WIDTH -1 : 0] stage3_out_state_out;
+  
+  logic signed [STATE_U_SUM_ROUNDED_WIDTH - 1 : 0] state_u_new_rounded; 
+
+  logic inter_skid3_output_ready;
+  logic inter_skid3_output_valid;
+  logic [NEURON_STATE_ADDR_WIDTH +
+         1 +
+         NEURON_STATE_DATA_WIDTH
+         -1: 0] inter_skid3_output_data;
+  
+  logic [NEURON_STATE_DATA_WIDTH-1:0] inter_skid3_output_neuron_state;
+  logic                               inter_skid3_output_spike_out;
+  logic [NEURON_STATE_ADDR_WIDTH-1:0] inter_skid3_output_neuron_id;
+
+  logic [RAM_LEAK_ADDR_WIDTH - 1 : 0] lutram_leak_addr;
+  logic [RAM_LEAK_DATA_WIDTH - 1 : 0] lutram_leak_factor;
+
+  //============================================================================
+  // Done Logic & Idle
+  //============================================================================
+  assign pipeline_done_d = ~in_valid_i &&
+                           ~input_skid_output_valid &&
+                           ~stage1_output_valid &&
+                           ~inter_skid1_output_valid &&
+                           ~stage2_output_valid &&
+                           ~inter_skid2_output_valid &&
+                           ~stage3_output_valid &&
+                           ~inter_skid3_output_valid &&
+                           ~out_valid_o;
+
+  assign done_o = ((state_q == IDLE) && pipeline_done_d);
+
+  //============================================================================
+  // Data I/O control
+  //============================================================================
+  assign in_ready_o             = input_skid_input_ready;
+  assign input_skid_input_valid = in_valid_i;
+  assign input_skid_input_data  = {in_id_i, in_state_i, in_weight_sum_i, in_timesteps_i, tau_mem_inv_i,
+                                   (EMIT_SPIKES ? spike_threshold_i : {SPIKE_THRESHOLD_WIDTH{1'b0}})};
+  assign inter_skid3_output_ready = out_ready_i;
+  assign out_valid_o              = inter_skid3_output_valid;
+  assign out_id_o                 = inter_skid3_output_neuron_id;
+  assign out_state_o              = inter_skid3_output_neuron_state;
+  assign out_spike_o              = inter_skid3_output_spike_out;
 
 
-  // Pipeline Step 1: Trigger pipeline if input is valid and calculate leak
-  always @(posedge clk_i) begin
+  //============================================================================
+  // MASTER FSM
+  //============================================================================
+  always_ff @(posedge clk_i) begin
     if (rst_i) begin
-      pipeline_exec <= 2'b00;
-    end else if (input_valid_i) begin
-      input_leaked <= weight_sum_i * $signed({1'b0, tau_mem_inv});
-
-      if (
-        timesteps_since_last_activation_i == 0 // During the very first timestep, no time has passed yet -> no leak
-        | LEAK_STATES != 1                     // If leak is disabled for this neuron
-      ) begin
-        // No leak, just shift to match fixed point format
-        state_u_leaked <= {neuron_state_u_in, {RAM_LEAK_DECIMALS {1'b0}}};
-      end else if (timesteps_since_last_activation_i < (2 ** RAM_LEAK_ADDR_WIDTH)) begin
-        // Normal operation
-        state_u_leaked <= neuron_state_u_in * $signed({1'b0, leak_factor});
-      end else begin
-        // Passed time is greater than LUTRAM size -> state is 0
-        state_u_leaked <= 0;
-      end
-
-      neuron_id_q <= neuron_id_i;
-      pipeline_exec   <= {pipeline_exec[0], 1'b1};
+      state_q <= IDLE;
     end else begin
-      pipeline_exec   <= {pipeline_exec[0], 1'b0};
+      state_q <= state_d;
     end
-  end
+  end  
 
-  // Pipeline Step 2: Add the two multiplication results based on fixed point logic
-  always @(posedge clk_i) begin
-    if (rst_i) begin
-      neuron_id_q2 <= {NEURON_STATE_ADDR_WIDTH{1'b0}};
-    end else if (pipeline_exec[0]) begin
-      neuron_id_q2 <= neuron_id_q;
-
-      // Shifts need to be done because of fixed point arithmetic
-      if (STATE_U_LEAKED_DECIMALS > INPUT_LEAKED_DECIMALS) begin
-        state_u_new <= state_u_leaked +
-            $signed({input_leaked, {(STATE_U_LEAKED_DECIMALS - INPUT_LEAKED_DECIMALS) {1'b0}}});
-      end else begin
-        state_u_new <= input_leaked +
-            $signed({state_u_leaked, {(INPUT_LEAKED_DECIMALS - STATE_U_LEAKED_DECIMALS) {1'b0}}});
-      end
-    end
-  end
-
-  // Pipeline Step 3: Check spike threshold and set outputs
-  always @(posedge clk_i) begin
-    if (rst_i) begin
-      output_valid_o     <= 0;
-      neuron_id_o        <= 0;
-      neuron_state_u_out <= RESET_VALUE_G;
-      spike_out_o        <= 0;
-    end else if (pipeline_exec[1]) begin
-      output_valid_o     <= 1;
-      neuron_id_o        <= neuron_id_q2;
-      spike_out_o        <= 0;
-
-      // Check if rounded state is below minimal state. We use the rounded state as rounding might result in a smaller value.
-      if (state_u_new_rounded < NEURON_STATE_U_MIN) begin
-        neuron_state_u_out <= NEURON_STATE_U_MIN;
-      end else begin
-        if (EMIT_SPIKES) begin
-          // Compare with non-rounded state_u to match our Norse neuron, can be changed but then in both places
-          if ($signed(state_u_new[STATE_U_SUM_WIDTH-1:SPIKE_THRESHOLD_SHIFT_DECIMALS]) >= SPIKE_THRESHOLD) begin
-            spike_out_o        <= 1;
-            neuron_state_u_out <= RESET_VALUE_G;
-          end else begin
-            neuron_state_u_out <= state_u_new_rounded;
-          end
-        end else begin
-          if (state_u_new_rounded > NEURON_STATE_U_MAX) begin // Saturate positive
-            neuron_state_u_out <= NEURON_STATE_U_MAX;
-          end else begin
-            neuron_state_u_out <= state_u_new_rounded;
-          end
+  always_comb begin
+    state_d = state_q;
+    case (state_q)
+      IDLE: begin
+        if (in_valid_i) begin
+          state_d = PROCESSING;
         end
       end
-    end else begin
-      output_valid_o <= 0;
-    end
+      PROCESSING: begin
+        if (pipeline_done_d) begin
+          state_d = IDLE;
+        end
+      end
+      default: begin
+        state_d = IDLE;
+      end
+    endcase
   end
 
+  //============================================================================
+  // Input Skid Buffer
+  //============================================================================
+  Pipeline_Skid_Buffer #(
+    .WORD_WIDTH((NEURON_STATE_ADDR_WIDTH +
+                 NEURON_STATE_DATA_WIDTH +
+                 WEIGHT_SUM_DATA_WIDTH +
+                 TIMESTEP_COUNTER_DATA_WIDTH + 
+                 TAU_MEM_INV_DATA_WIDTH +
+                 SPIKE_THRESHOLD_WIDTH)),
+    .CIRCULAR_BUFFER(0)
+  ) u_input_skid_buffer (
+    .clock       (clk_i),
+    .clear       (rst_i),
+    .input_ready (input_skid_input_ready),
+    .input_valid (input_skid_input_valid),
+    .input_data  (input_skid_input_data),
+    .output_ready(input_skid_output_ready),
+    .output_valid(input_skid_output_valid),
+    .output_data (input_skid_output_data)
+  );
+
+  localparam INPUT_SKID_OUT_OFFSET_SPIKE_THRESHOLD = 0;
+  localparam INPUT_SKID_OUT_OFFSET_TAU_MEM_INV     = INPUT_SKID_OUT_OFFSET_SPIKE_THRESHOLD + SPIKE_THRESHOLD_WIDTH;
+  localparam INPUT_SKID_OUT_OFFSET_TS_LAST         = INPUT_SKID_OUT_OFFSET_TAU_MEM_INV + TAU_MEM_INV_DATA_WIDTH;
+  localparam INPUT_SKID_OUT_OFFSET_WEIGHT_SUM      = INPUT_SKID_OUT_OFFSET_TS_LAST + TIMESTEP_COUNTER_DATA_WIDTH;
+  localparam INPUT_SKID_OUT_OFFSET_NEURON_STATE    = INPUT_SKID_OUT_OFFSET_WEIGHT_SUM + WEIGHT_SUM_DATA_WIDTH;
+  localparam INPUT_SKID_OUT_OFFSET_NEURON_ID       = INPUT_SKID_OUT_OFFSET_NEURON_STATE + NEURON_STATE_DATA_WIDTH;
+
+  assign input_skid_output_spike_threshold = input_skid_output_data[INPUT_SKID_OUT_OFFSET_SPIKE_THRESHOLD +: SPIKE_THRESHOLD_WIDTH];
+  assign input_skid_output_tau_mem_inv     = input_skid_output_data[INPUT_SKID_OUT_OFFSET_TAU_MEM_INV     +: TAU_MEM_INV_DATA_WIDTH];
+  assign input_skid_output_timesteps       = input_skid_output_data[INPUT_SKID_OUT_OFFSET_TS_LAST         +: TIMESTEP_COUNTER_DATA_WIDTH];
+  assign input_skid_output_weight_sum      = input_skid_output_data[INPUT_SKID_OUT_OFFSET_WEIGHT_SUM      +: WEIGHT_SUM_DATA_WIDTH];
+  assign input_skid_output_neuron_state    = input_skid_output_data[INPUT_SKID_OUT_OFFSET_NEURON_STATE    +: NEURON_STATE_DATA_WIDTH];
+  assign input_skid_output_neuron_id       = input_skid_output_data[INPUT_SKID_OUT_OFFSET_NEURON_ID       +: NEURON_STATE_ADDR_WIDTH];
+
+  //============================================================================
+  // Stage 1: Leakage Calculations
+  //============================================================================
+  assign input_skid_output_ready = stage1_output_ready;
+  assign stage1_output_valid     = input_skid_output_valid;
+
+  assign lutram_leak_addr = ram_leak_write_en_i ? ram_leak_addr_i : input_skid_output_timesteps;
 
   generate
+    if (LEAK_STATES == 0) begin
+      always_comb begin
+        stage1_leaked_input = {input_skid_output_weight_sum, {TAU_MEM_INV_FRACTIONALS {1'b0}}}; 
+        stage1_leaked_state = {input_skid_output_neuron_state, {RAM_LEAK_FRACTIONALS {1'b0}}}; 
+        stage1_output_data  = {input_skid_output_neuron_id, stage1_leaked_input, stage1_leaked_state,
+                               input_skid_output_spike_threshold};
+      end
+    end else begin
+      always_comb begin
+        stage1_leaked_input = input_skid_output_weight_sum * $signed({1'b0, input_skid_output_tau_mem_inv}); 
+        if (input_skid_output_timesteps == 0) begin
+          stage1_leaked_state = {input_skid_output_neuron_state, {RAM_LEAK_FRACTIONALS {1'b0}}}; 
+        end else if (input_skid_output_timesteps < (2 ** RAM_LEAK_ADDR_WIDTH)) begin
+          stage1_leaked_state = $signed(input_skid_output_neuron_state) * $signed({1'b0, lutram_leak_factor}); 
+        end else begin
+          stage1_leaked_state = 0;
+        end
+        stage1_output_data  = {input_skid_output_neuron_id, stage1_leaked_input, stage1_leaked_state,
+                               input_skid_output_spike_threshold};
+      end
+    end
+  endgenerate
+
+  //============================================================================
+  // Inter-stage Skid Buffer 1
+  //============================================================================
+  Pipeline_Skid_Buffer #(
+    .WORD_WIDTH((NEURON_STATE_ADDR_WIDTH +
+                 INPUT_LEAKED_WIDTH +
+                 STATE_U_LEAKED_WIDTH +
+                 SPIKE_THRESHOLD_WIDTH)),
+    .CIRCULAR_BUFFER(0)
+  ) u_inter_skid_buffer_1 (
+    .clock       (clk_i),
+    .clear       (rst_i),
+    .input_ready (stage1_output_ready),
+    .input_valid (stage1_output_valid),
+    .input_data  (stage1_output_data),
+    .output_ready(inter_skid1_output_ready),
+    .output_valid(inter_skid1_output_valid),
+    .output_data (inter_skid1_output_data)
+  );
+
+  localparam SKID1_OUT_OFFSET_SPIKE_THRESHOLD  = 0;
+  localparam SKID1_OUT_OFFSET_LEAKED_STATE     = SKID1_OUT_OFFSET_SPIKE_THRESHOLD + SPIKE_THRESHOLD_WIDTH;
+  localparam SKID1_OUT_OFFSET_LEAKED_INPUT     = SKID1_OUT_OFFSET_LEAKED_STATE + STATE_U_LEAKED_WIDTH;
+  localparam SKID1_OUT_OFFSET_NEURON_ID        = SKID1_OUT_OFFSET_LEAKED_INPUT + INPUT_LEAKED_WIDTH;
+
+  assign inter_skid1_output_spike_threshold = inter_skid1_output_data[SKID1_OUT_OFFSET_SPIKE_THRESHOLD +: SPIKE_THRESHOLD_WIDTH];
+  assign inter_skid1_output_leaked_state    = inter_skid1_output_data[SKID1_OUT_OFFSET_LEAKED_STATE    +: STATE_U_LEAKED_WIDTH];
+  assign inter_skid1_output_leaked_input    = inter_skid1_output_data[SKID1_OUT_OFFSET_LEAKED_INPUT    +: INPUT_LEAKED_WIDTH];
+  assign inter_skid1_output_neuron_id       = inter_skid1_output_data[SKID1_OUT_OFFSET_NEURON_ID       +: NEURON_STATE_ADDR_WIDTH];
+
+  //============================================================================
+  // Stage 2: Addition
+  //============================================================================
+  assign inter_skid1_output_ready = stage2_output_ready;
+  assign stage2_output_valid = inter_skid1_output_valid;
+
+  generate
+    if (STATE_U_LEAKED_DECIMALS > INPUT_LEAKED_DECIMALS) begin
+      always_comb begin
+        stage2_state_u_new = inter_skid1_output_leaked_state +
+                             $signed({inter_skid1_output_leaked_input, {(STATE_U_LEAKED_DECIMALS - INPUT_LEAKED_DECIMALS){1'b0}}});
+        stage2_output_data = {inter_skid1_output_neuron_id, stage2_state_u_new, inter_skid1_output_spike_threshold};
+      end
+    end else begin
+      always_comb begin
+        stage2_state_u_new = inter_skid1_output_leaked_input +
+                            $signed({inter_skid1_output_leaked_state, {(INPUT_LEAKED_DECIMALS - STATE_U_LEAKED_DECIMALS){1'b0}}});
+        stage2_output_data = {inter_skid1_output_neuron_id, stage2_state_u_new, inter_skid1_output_spike_threshold};
+      end
+    end
+  endgenerate
+
+  //============================================================================
+  // Inter-stage Skid Buffer 2
+  //============================================================================
+  Pipeline_Skid_Buffer #(
+    .WORD_WIDTH((NEURON_STATE_ADDR_WIDTH +
+                 STATE_U_SUM_WIDTH +
+                 SPIKE_THRESHOLD_WIDTH)),
+    .CIRCULAR_BUFFER(0)
+  ) u_inter_skid_buffer_2 (
+    .clock       (clk_i),
+    .clear       (rst_i),
+    .input_ready (stage2_output_ready),
+    .input_valid (stage2_output_valid),
+    .input_data  (stage2_output_data),
+    .output_ready(inter_skid2_output_ready),
+    .output_valid(inter_skid2_output_valid),
+    .output_data (inter_skid2_output_data)
+  );
+
+  localparam SKID2_OUT_OFFSET_SPIKE_THRESHOLD = 0;
+  localparam SKID2_OUT_OFFSET_STATE_U_NEW     = SKID2_OUT_OFFSET_SPIKE_THRESHOLD + SPIKE_THRESHOLD_WIDTH;
+  localparam SKID2_OUT_OFFSET_NEURON_ID       = SKID2_OUT_OFFSET_STATE_U_NEW + STATE_U_SUM_WIDTH;
+
+  assign inter_skid2_output_spike_threshold = inter_skid2_output_data[SKID2_OUT_OFFSET_SPIKE_THRESHOLD +: SPIKE_THRESHOLD_WIDTH];
+  assign inter_skid2_output_state_u_new     = inter_skid2_output_data[SKID2_OUT_OFFSET_STATE_U_NEW     +: STATE_U_SUM_WIDTH];
+  assign inter_skid2_output_neuron_id       = inter_skid2_output_data[SKID2_OUT_OFFSET_NEURON_ID       +: NEURON_STATE_ADDR_WIDTH];
+
+  //============================================================================
+  // Stage 3: Spike Threshold Check & Rounding
+  //============================================================================
+  
+  generate
     if (STATE_ROUND_MODE == "CONVERGENT") begin
-      round_convergent #(
+      RoundConvergent #(
           .INPUT_WIDTH(STATE_U_SUM_WIDTH),
           .OUTPUT_WIDTH(STATE_U_SUM_ROUNDED_WIDTH)
       ) round_convergent_1 (
-          .data_i(state_u_new),
+          .data_i(inter_skid2_output_state_u_new),
           .data_o(state_u_new_rounded)
       );
     end else if (STATE_ROUND_MODE == "FLOOR") begin
-      // Slice off decimal places, to match output decimal places.
-      // We do not need to resize the integer part as the MSBs are automatically cut when assigning to output in Pipeline Step 3,
-      // thus effectively removing overflow bits; minimum clamping in pipeline step 3 keeps this safe.
-      assign state_u_new_rounded = $signed(state_u_new[STATE_U_SUM_WIDTH - 1 : STATE_U_SUM_DECIMALS - NEURON_STATE_U_DECIMALS]); // Cast to sign required after slicing in Verilog!
+      assign state_u_new_rounded = $signed(inter_skid2_output_state_u_new[STATE_U_SUM_WIDTH - 1 : STATE_U_SUM_DECIMALS - NEURON_STATE_U_DECIMALS]); 
     end else begin
       initial $fatal(1, "STATE_ROUND_MODE unsupported mode");
     end
   endgenerate
 
+  assign inter_skid2_output_ready = stage3_output_ready;
+  assign stage3_output_valid = inter_skid2_output_valid;
 
-  // Leak LUTRAM: indexed by timesteps since last spike; contents are (1 - 1/tau)^n in fixed point.
-  wire [RAM_LEAK_DATA_WIDTH - 1 : 0] lutram_leak_output;
-  wire [RAM_LEAK_ADDR_WIDTH - 1 : 0] lutram_leak_addr;
-  assign lutram_leak_addr = ram_leak_write_en_i ? ram_leak_addr_i : timesteps_since_last_activation_i;
-  assign leak_factor = timesteps_since_last_activation_i < (2 ** RAM_LEAK_ADDR_WIDTH) ? lutram_leak_output : 0;
+  generate
+    if (EMIT_SPIKES) begin
+      always_comb begin
+        stage3_spike_out = 0;
+        stage3_out_state_out = RESET_VALUE;
+        if (state_u_new_rounded < NEURON_STATE_U_MIN) begin 
+            stage3_out_state_out = NEURON_STATE_U_MIN;
+        end else begin
+          if ( $signed(
+                  inter_skid2_output_state_u_new[STATE_U_SUM_WIDTH-1:SPIKE_THRESHOLD_SHIFT_DECIMALS]
+              ) >=
+                  $signed(SPIKE_THR_U_CMP_W'($unsigned(inter_skid2_output_spike_threshold)))
+              ) begin
+            stage3_spike_out     = 1;
+            stage3_out_state_out = RESET_VALUE;
+          end else begin
+            stage3_out_state_out = state_u_new_rounded;
+          end
+        end
+        
+        stage3_output_data = {inter_skid2_output_neuron_id, stage3_spike_out, stage3_out_state_out};
+      end
+    end else begin
+      always_comb begin
+        stage3_spike_out = 0;
+        stage3_out_state_out = RESET_VALUE;
+        if (state_u_new_rounded < NEURON_STATE_U_MIN) begin 
+            stage3_out_state_out = NEURON_STATE_U_MIN;
+        end else begin
+          if (state_u_new_rounded > NEURON_STATE_U_MAX) begin
+            stage3_out_state_out = NEURON_STATE_U_MAX;
+          end else begin
+            stage3_out_state_out = state_u_new_rounded;
+          end
+        end
+        
+        stage3_output_data  = {inter_skid2_output_neuron_id, stage3_spike_out, stage3_out_state_out};
+      end
+    end
+  endgenerate
 
-  SINGLE_PORT_LUTRAM #(
-      .RAM_WIDTH(RAM_LEAK_DATA_WIDTH),
-      .RAM_ADDR_BITS(RAM_LEAK_ADDR_WIDTH),
-      .INIT_MEM_FILE(RAM_LEAK_INIT_MEM_FILE)
-  ) RAM_inst (
-      .clkw(clk_i),                  // Write clock input
-      .we_i(ram_leak_write_en_i),
-      .data_in(ram_leak_data_i),
-      .addr_i(lutram_leak_addr),
-      .data_out(lutram_leak_output)
+  //============================================================================
+  // Inter-stage Skid Buffer 3
+  //============================================================================
+  Pipeline_Skid_Buffer #(
+    .WORD_WIDTH((NEURON_STATE_ADDR_WIDTH +
+                 1 +
+                 NEURON_STATE_DATA_WIDTH)),
+    .CIRCULAR_BUFFER(0)
+  ) u_inter_skid_buffer_3 (
+    .clock       (clk_i),
+    .clear       (rst_i),
+    .input_ready (stage3_output_ready),
+    .input_valid (stage3_output_valid),
+    .input_data  (stage3_output_data),
+    .output_ready(inter_skid3_output_ready),
+    .output_valid(inter_skid3_output_valid),
+    .output_data (inter_skid3_output_data)
   );
+
+  localparam SKID3_OUT_OFFSET_NEURON_STATE = 0;
+  localparam SKID3_OUT_OFFSET_SPIKE_OUT    = SKID3_OUT_OFFSET_NEURON_STATE + NEURON_STATE_DATA_WIDTH;
+  localparam SKID3_OUT_OFFSET_NEURON_ID    = SKID3_OUT_OFFSET_SPIKE_OUT + 1;
+
+  assign inter_skid3_output_neuron_state = inter_skid3_output_data[SKID3_OUT_OFFSET_NEURON_STATE +: NEURON_STATE_DATA_WIDTH];
+  assign inter_skid3_output_spike_out    = inter_skid3_output_data[SKID3_OUT_OFFSET_SPIKE_OUT    +: 1];
+  assign inter_skid3_output_neuron_id    = inter_skid3_output_data[SKID3_OUT_OFFSET_NEURON_ID    +: NEURON_STATE_ADDR_WIDTH];
+
+
+  //============================================================================
+  // Memory Instantiations
+  //============================================================================
+
+  generate
+    if (LEAK_STATES) begin
+      SinglePortLutram #(
+          .RAM_WIDTH(RAM_LEAK_DATA_WIDTH),
+          .RAM_ADDR_BITS(RAM_LEAK_ADDR_WIDTH),
+          .INIT_MEM_FILE(RAM_LEAK_INIT_MEM_FILE)
+      ) RAM_inst (
+          .clkw    (clk_i),
+          .we_i    (ram_leak_write_en_i),
+          .data_in (ram_leak_data_i),
+          .addr_i  (lutram_leak_addr),
+          .data_out(lutram_leak_factor)
+      );
+    end else begin
+      assign lutram_leak_factor = {RAM_LEAK_DATA_WIDTH{1'b0}};
+    end
+  endgenerate
 
 endmodule

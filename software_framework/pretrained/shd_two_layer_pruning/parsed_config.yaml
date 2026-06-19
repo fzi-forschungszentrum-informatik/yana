@@ -1,0 +1,87 @@
+trainer_cfg:
+  output_path: ./output/shd/feed_forward/
+  device_num: -1
+  batch_size: 512
+  num_epochs: 100
+  num_workers: 4
+  es_patience: 10
+  dataset_cfg:
+    dataset: SHD
+    path: datasets/
+    disk_cache: false
+    num_samples: -1
+    num_output_classes: 20
+    train_split: 0.8
+    transform_cfg:
+      n_time_bins: 100
+      time_window: 0
+      spatial_factor: 4
+      merge_polarities: true
+      augmentation_enabled: false
+      augmentation_transforms: []
+  checkpoint_path: __none__
+  random_seed: 1
+model_cfg:
+  network_type: custom_sequential_state
+  optimizer_cfg:
+    optimizer: Adam
+    loss: nll
+    lr: 0.05
+    lr_scheduler: cosine
+    lr_scheduler_cfg:
+      max_epoch: 20
+    spikerate_target: 0.0
+    spikerate_loss_coefficient: 0.0
+    weight_decay: 0.0
+    loss_params: __none__
+  network_cfg:
+    weight_init_enable: false
+    weight_init_type: custom
+    weight_init_gain: 1.0
+    weight_init_gain_ramp: 1.0
+    nir_file: ''
+    layers:
+    - type: Flatten
+      params: {}
+    - type: Linear
+      params:
+        in_features: 175
+        out_features: 50
+        bias: false
+    - type: create_hidden_cell
+      params:
+        neuron_type: lif_quant
+        tau_inv_mem: 0.01
+        threshold: 0.01
+    - type: Linear
+      params:
+        in_features: 50
+        out_features: 50
+        bias: false
+    - type: create_hidden_cell
+      params:
+        neuron_type: lif_quant
+        tau_inv_mem: 0.01
+        threshold: 0.01
+    - type: Linear
+      params:
+        in_features: 50
+        out_features: 20
+        bias: false
+    - type: create_output_cell
+      params:
+        neuron_type: i_quant
+        tau_inv_mem: 0.0
+    dt: 1.0
+  decoder_transforms:
+  - pick_last
+  - log_softmax
+  enable_tracking: false
+pruning_cfg:
+  pruned_layers:
+  - 0
+  - 1
+  scheduler_cfg:
+    target_sparsity: 0.8
+    increment: 0.2
+    frequency: 2

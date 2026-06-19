@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yana"
-version = "0.0.1"
+version = "0.0.2"
 description = "YANA Toolchain - Seamless integration of training workflow with deployment onto the YANA framework"
 readme = "README.md"
 authors = [

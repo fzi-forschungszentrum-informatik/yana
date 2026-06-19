@@ -1,0 +1,7 @@
+# Format:          [word_length, fraction_length, signed]
+format_weights:    [18,          10,              true  ]
+format_weight_sum: [31,          10,              true  ]
+format_state:      [20,          10,              true  ]
+format_threshold:  [11,          10,              false ]
+format_tau_inv_l:  [8,           8,               false ]
+format_tau_inv_j:  [16,          16,              false ]

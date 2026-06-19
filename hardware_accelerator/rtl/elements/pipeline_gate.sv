@@ -1,0 +1,58 @@
+`default_nettype none
+
+module Pipeline_Gate
+#(
+    parameter WORD_WIDTH        = 2,
+    parameter IMPLEMENTATION    = "AND",
+    parameter GATE_DATA         = 0
+)
+(
+    input   wire                        enable,
+
+    output  wire                        input_ready,
+    input   wire                        input_valid,
+    input   wire    [WORD_WIDTH-1:0]    input_data,
+
+    output  wire                        output_valid,
+    input   wire                        output_ready,
+    output  wire    [WORD_WIDTH-1:0]    output_data
+);
+
+    generate
+
+        if (GATE_DATA != 0) begin : gen_gate_data
+
+            Annuller
+            #(
+                .WORD_WIDTH     (WORD_WIDTH + 1 + 1),
+                .IMPLEMENTATION (IMPLEMENTATION)
+            )
+            gate_control_and_data
+            (
+                .annul      (enable == 1'b0),
+                .data_in    ({input_data,  output_ready, input_valid}),
+                .data_out   ({output_data, input_ready,  output_valid})
+            );
+
+        end
+        else begin : gen_pass_data
+
+            assign output_data = input_data;
+
+            Annuller
+            #(
+                .WORD_WIDTH     (1 + 1),
+                .IMPLEMENTATION (IMPLEMENTATION)
+            )
+            gate_control_only
+            (
+                .annul      (enable == 1'b0),
+                .data_in    ({output_ready, input_valid}),
+                .data_out   ({input_ready,  output_valid})
+            );
+
+        end
+
+    endgenerate
+
+endmodule

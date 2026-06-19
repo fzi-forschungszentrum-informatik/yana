@@ -1,9 +1,10 @@
-/**
- * Takes a real number as an input and returns an
- * integer that is the ceiling of the real number.
- */
+`ifndef _math_h
+`define _math_h
+
+`include "clog2_function.vh"
+
 function integer crtoi(input real x);
-    crtoi = $rtoi(x) + (x != $rtoi(x)); // Add 1 if the real number is not equal to the integer
+  crtoi = $rtoi(x) + (x != $rtoi(x));
 endfunction
 
 function integer max (input integer a, input integer b);
@@ -15,11 +16,61 @@ function integer max (input integer a, input integer b);
   end
 endfunction
 
+function integer max_in_array;
+    input integer arr [0:255];
+    input integer size;
+    
+    integer i;
+    integer max_val;
+    
+    begin
+        max_val = arr[0];
+        for (i = 1; i < size; i = i + 1) begin
+            if (arr[i] > max_val)
+                max_val = arr[i];
+        end
+        max_in_array = max_val;
+    end
+endfunction
+
+function integer min_in_array;
+    input integer arr [0:255];
+    input integer size;
+    
+    integer i;
+    integer min_val;
+    
+    begin
+        min_val = arr[0];
+        for (i = 1; i < size; i = i + 1) begin
+            if (arr[i] < min_val)
+                min_val = arr[i];
+        end
+        min_in_array = min_val;
+    end
+endfunction
+
+function integer sum_of_array;
+    input integer arr [0:255];
+    input integer size;
+    
+    integer i;
+    integer sum_val;
+    
+    begin
+        sum_val = 0;
+        for (i = 0; i < size; i = i + 1) begin
+            sum_val = sum_val + arr[i];
+        end
+        sum_of_array = sum_val;
+    end
+endfunction
+
 function integer abs_diff (input integer a, input integer b);
-    if (a > b)
-      abs_diff = a - b;
-    else
-      abs_diff = b - a;
+  if (a > b)
+    abs_diff = a - b;
+  else
+    abs_diff = b - a;
 endfunction
 
 function integer ceil_division;
@@ -30,29 +81,6 @@ function integer ceil_division;
   end
 endfunction
 
-/**
-* Addition of fixed point numers a, b, with different widths and decimal bits:
-* 1. pad number with less decimals, for example a
-* 2. add a + b
-* resulting length is max of integer width + max of decimal width + 1
-*
-* Example:
-* localparam a_width = 16;
-* localparam a_decimals = 8;
-* localparam b_width = 12;
-* localparam b_decimals = 4;
-* localparam r_width = fixed_addition_result_width(a_width, a_decimals, b_width, b_decimals);
-* localparam r_decimals = fixed_addition_result_decimals(a_width, a_decimals, b_width, b_decimals);
-*
-* reg signed a[a_width-1:0];
-* reg signed b[b_width-1:0];
-* reg signed r[r_width-1:0];
-*
-* if(a_decimals < b_decimals)
-*   r <= {a, {(b_decimals-a_decimals){1'b0}}} + b;
-* else
-*   r <= a + {b, {(a_decimals-b_decimals){1'b0}}};
-*/
 function automatic integer fixed_addition_result_width(input integer a_width, input integer a_decimals,
                                                        input integer b_width, input integer b_decimals);
   integer a_integer = a_width - a_decimals;
@@ -85,3 +113,5 @@ endfunction
 function real log2(input real x);
   log2 = $ln(x) / $ln(2);
 endfunction
+
+`endif

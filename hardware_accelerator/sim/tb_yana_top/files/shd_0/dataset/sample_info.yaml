@@ -1,0 +1,12 @@
+0:
+  target: 5
+  input_file: sample_0.txt
+  output_file: neuron_state_trace_0.txt
+1:
+  target: 9
+  input_file: sample_1.txt
+  output_file: neuron_state_trace_1.txt
+2:
+  target: 2
+  input_file: sample_2.txt
+  output_file: neuron_state_trace_2.txt

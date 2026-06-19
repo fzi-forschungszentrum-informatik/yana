@@ -1,61 +1,89 @@
-# All fields must exist. Even if not used by a specific network type. network_cfg only has to contain elements for this netwok
-
 trainer_cfg:
-  output_path: "./output/shd/"
-  device_num: 0
+  output_path: "./output/shd/feed_forward/"
+  device_num: -1
   batch_size: 512
   num_epochs: 100
-  es_patience: 5
+  num_workers: 4
+  es_patience: 10
+  checkpoint_path: null
+  random_seed: 1
 
   dataset_cfg:
-    path: "datasets/"
     dataset: "SHD"
+    path: "datasets/"
+    disk_cache: false
 
     num_samples: -1
     num_output_classes: 20
     train_split: 0.8
-    random_seed: 1
 
     transform_cfg:
       n_time_bins: 100
       time_window: 0
-      spatial_factor: 1
+      spatial_factor: 4
       merge_polarities: true
-
-  checkpoint_path: null
+      augmentation_enabled: false
+      augmentation_transforms: {}
 
 model_cfg:
-  network_type: "feed_forward"
+  network_type: "custom_sequential_state"
   network_cfg:
     # Network architecture config
-    hidden_features: 100
-    dropout_low: 0.0
-    dropout_high: 0.0
-    bias: false
-    # Neuron and quantization config
-    neuron_type_hidden: lif_quant
-    neuron_type_out: li_quant
-    tau_inv_mem_hidden: 0.01
-    tau_inv_mem_output: 0.001
-    threshold: 0.01
+    layers:
+      - type: "Flatten"
+      - type: "Linear"
+        params:
+          in_features: network_input_features  # (= input_shape[-1])
+          out_features: 50  # Number of hidden neurons
+          bias: false
+      - type: "create_hidden_cell"
+        params:
+          neuron_type: "lif_quant"
+          tau_inv_mem: 0.01
+          threshold: 0.01
+      - type: "Linear"
+        params:
+          in_features: null  # Automatically set to previous layer's out_features
+          out_features: network_output_features  # (= num_output_classes)
+          bias: false
+      - type: "create_output_cell"
+        params:
+          neuron_type: "i_quant"
+          tau_inv_mem: 0.0
+
+    # Time Constant
     dt: 1.0
-    quant_cfg.yaml: "yana/train/config/hardware/accelerator_quantization.yaml"
+
+    # Weight initialization
+    weight_init_enable: false
+    weight_init_type: "custom"
+    weight_init_gain: 1.0
+    weight_init_gain_ramp: 0.0
 
   optimizer_cfg:
-    optimizer: "Adam"
-    lr: 0.08
-    lr_scheduling: false
-    lr_scheduling_step_size: 10
-    lr_scheduling_fac: 0.1
+    optimizer: "Adam" # Alternatives: AdamW, RMSprop, SGD
+    loss: "nll"
+    lr: 0.05
+    lr_scheduler: "cosine"
+    lr_scheduler_cfg:
+      max_epoch: 20
+    # lr_scheduler: "step"
+    # lr_scheduler_cfg:
+    #   step_size: 5
+    #   factor: 0.1
+    spikerate_target: 0.0
     spikerate_loss_coefficient: 0.0
     weight_decay: 0.0
 
-hardware_cfg.yaml: "yana/train/config/hardware/accelerator_hardware.yaml"
+  enable_tracking: false
+  decoder_transforms: [
+    "pick_last",    # Pick output of last time step
+    "log_softmax"   # Logarithmic softmax
+  ]
 
 pruning_cfg:
-  iterative_pruning: false
-  pruning_per_step: 0.1
-  max_pruning: 0.5
-  frequency: 1
-  method: "magnitude"
-  mode: "lin"
+  pruned_layers: [0]
+  scheduler_cfg:
+    target_sparsity: 0.80
+    increment: 0.20
+    frequency: 2

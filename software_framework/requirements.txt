@@ -2,11 +2,16 @@ wheel
 numpy<2
 pytorch_lightning
 torch<2.11.0
+torchvision
 tonic
 qtorch @ git+https://github.com/nitzsche-fzi/QPyTorch.git
-nir @ git+https://github.com/mneher11/NIR.git@dev-os
-nirtorch @ git+https://github.com/mneher11/NIRTorch.git@dev-os
-norse @ git+https://github.com/mneher11/norse.git@dev-os
+nir==1.0.7
+norse @ git+https://github.com/mneher11/norse.git
+nirtorch @ git+https://github.com/mneher11/NIRTorch.git@dev
+snntorch==0.9.4
+tabulate
 matplotlib
 tensorboard
 pyyaml
+pytest
+pydantic

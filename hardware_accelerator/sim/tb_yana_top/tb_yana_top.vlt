@@ -1,0 +1,31 @@
+`verilator_config
+
+lint_off -rule MODMISSING
+
+lint_off -rule REALCVT -file "*/global_params.vh"
+
+lint_off -rule WIDTHTRUNC
+lint_off -rule WIDTHEXPAND
+lint_off -rule SELRANGE
+
+lint_off -rule PINCONNECTEMPTY
+lint_off -rule UNUSED
+lint_off -rule UNUSEDSIGNAL
+lint_off -rule UNUSEDPARAM
+lint_off -rule BLKSEQ
+lint_off -rule COMBDLY
+lint_off -rule INITIALDLY
+lint_off -rule STMTDLY
+lint_off -rule IMPLICIT
+lint_off -rule DECLFILENAME
+lint_off -rule EOFNEWLINE
+lint_off -rule SYMRSVDWORD
+
+tracing_off -scope "tb_yana_top" -levels 0
+tracing_on  -scope "tb_yana_top" -levels 1
+tracing_on  -scope "tb_yana_top.uut" -levels 1
+tracing_on  -scope "tb_yana_top.uut.u_control_unit" -levels 1
+tracing_on  -scope "tb_yana_top.uut.u_mesh.rows[0].cols[0].u_node.u_core" -levels 0
+tracing_on  -scope "tb_yana_top.uut.u_mesh.rows[0].cols[1].u_node.u_core" -levels 0
+tracing_on  -scope "tb_yana_top.uut.u_mesh.rows[1].cols[0].u_node.u_core" -levels 0
+tracing_on  -scope "tb_yana_top.uut.u_mesh.rows[1].cols[1].u_node.u_core" -levels 0

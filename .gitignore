@@ -13,3 +13,9 @@ software_framework/datasets/
 .venv/
 # Ignore IDE specific files
 .vscode/
+# Ignore Verilator generated files
+hardware_accelerator/sim/tb_yana_top/obj_dir*/
+hardware_accelerator/sim/tb_yana_top/*.fst
+hardware_accelerator/sim/tb_yana_top/Vtb_yana_top
+# Ignore additional experiment directories
+hardware_accelerator/sim/tb_yana_top/files/

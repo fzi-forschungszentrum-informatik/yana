@@ -1,0 +1,24 @@
+name: yana
+
+services:
+  main:
+    image: "ghcr.io/neher-fzi/yana:latest"
+    container_name: yana
+    tty: true
+    network_mode: bridge
+
+    environment:
+      - HOST_USER
+      - HOST_UID
+      - HOST_GID
+
+    ports:
+      # Used for tensorboard
+      - "6006:6006"
+
+    volumes:
+      - type: bind
+        source: ../
+        target: /workspace
+
+    shm_size: "4gb"

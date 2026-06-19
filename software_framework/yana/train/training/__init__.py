@@ -4,4 +4,4 @@ from .train_utils import (
     do_test,
     export_samples
 )
-from .prune_utils import do_iterative_pruning
+from .pruning import do_pruning, apply_pruning_masks

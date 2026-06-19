@@ -1,0 +1,10 @@
+# Neuron configuration
+type: INPUT
+neuron_config:
+  emit_spikes: false
+  leak_enabled: false
+  tau_mem_inv: 0.0
+  threshold: 0.0
+  leak_lut_len: 32
+# Quantization configuration
+quant_config: "yana/core/config/default/quant_hidden.yaml"
